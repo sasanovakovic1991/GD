@@ -277,6 +277,7 @@
       box-shadow: var(--shadow);
     }
     .modal-header { display: flex; justify-content: space-between; align-items: center; }
+    .modal-header .close-btn { border-radius: 999px; }
 
     .toast {
       position: fixed;
@@ -347,7 +348,7 @@
     <div class="modal-card">
       <div class="modal-header">
         <h3 id="modalTitle">Postavke</h3>
-        <button class="btn small" data-action="close-modal">Zatvori</button>
+        <button class="btn small close-btn" data-action="close-modal">Zatvori ✕</button>
       </div>
       <div id="modalBody"></div>
     </div>
@@ -501,6 +502,7 @@
         address: "",
         items: [],
         discount: 0,
+        rebatePct: 0,
         vatRate: settings.vatRate ?? 25,
         notes: ""
       };
@@ -519,7 +521,9 @@
         address: "",
         items: [],
         discount: 0,
+        rebatePct: 0,
         vatRate: settings.vatRate ?? 25,
+        ruc: "",
         notes: ""
       };
     }
@@ -576,13 +580,14 @@
       return new Intl.NumberFormat("hr-HR", { style: "currency", currency: "EUR" }).format(value || 0);
     }
 
-    function calcTotals(items, discount, vatRate) {
+    function calcTotals(items, discount, vatRate, rebatePct) {
       const subtotal = items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.price) || 0), 0);
       const discountValue = Math.max(0, Number(discount) || 0);
-      const base = Math.max(0, subtotal - discountValue);
+      const rebateValue = subtotal * (Math.max(0, Number(rebatePct) || 0) / 100);
+      const base = Math.max(0, subtotal - rebateValue - discountValue);
       const vat = base * (Number(vatRate) || 0) / 100;
       const total = base + vat;
-      return { subtotal, discountValue, base, vat, total };
+      return { subtotal, rebateValue, discountValue, base, vat, total };
     }
 
     function toast(message) {
@@ -675,7 +680,7 @@
                       <strong>${inv.number}</strong>
                       <span class="badge danger">Rok: ${inv.dueDate}</span>
                     </div>
-                    <div class="muted">${inv.customer} · ${fmtEur(calcTotals(inv.items, inv.discount, inv.vatRate).total)}</div>
+                    <div class="muted">${inv.customer} · ${fmtEur(calcTotals(inv.items, inv.discount, inv.vatRate, inv.rebatePct || 0).total)}</div>
                   </div>
                 `).join("")}
               </div>
@@ -687,7 +692,7 @@
 
     function renderOffers() {
       const inventoryOptions = state.data.inventory.map(item => `<option value="${item.id}">${item.name} (${fmtEur(item.price)}/${item.unit})</option>`).join("");
-      const totals = calcTotals(state.draftOffer.items, state.draftOffer.discount, state.draftOffer.vatRate);
+      const totals = calcTotals(state.draftOffer.items, state.draftOffer.discount, state.draftOffer.vatRate, state.draftOffer.rebatePct);
       return `
         <div class="grid two">
           <div class="card">
@@ -753,7 +758,11 @@
             ${renderDraftItems(state.draftOffer.items, "offer")}
             <div class="divider"></div>
 
-            <div class="grid two">
+            <div class="grid three">
+              <div>
+                <label>Rabat (%)</label>
+                <input id="offer_rebate" type="number" min="0" step="0.1" value="${state.draftOffer.rebatePct}" />
+              </div>
               <div>
                 <label>Popust (EUR)</label>
                 <input id="offer_discount" type="number" min="0" step="0.01" value="${state.draftOffer.discount}" />
@@ -767,6 +776,7 @@
             <div class="row space">
               <div>
                 <div class="muted">Meduzbroj: ${fmtEur(totals.subtotal)}</div>
+                <div class="muted">Rabat: ${fmtEur(totals.rebateValue)}</div>
                 <div class="muted">Popust: ${fmtEur(totals.discountValue)}</div>
                 <div class="muted">PDV: ${fmtEur(totals.vat)}</div>
                 <strong>Ukupno: ${fmtEur(totals.total)}</strong>
@@ -783,7 +793,7 @@
             ${state.data.offers.length === 0 ? `<p class="muted">Nema ponuda. Krenite s izradom!</p>` : `
               <div class="list">
                 ${state.data.offers.slice().reverse().map(offer => {
-                  const total = calcTotals(offer.items, offer.discount, offer.vatRate).total;
+                  const total = calcTotals(offer.items, offer.discount, offer.vatRate, offer.rebatePct || 0).total;
                   return `
                     <div class="list-item">
                       <div class="row space align">
@@ -809,7 +819,7 @@
 
     function renderInvoices() {
       const offerOptions = state.data.offers.map(offer => `<option value="${offer.id}">${offer.number} - ${offer.customer || "Klijent"}</option>`).join("");
-      const totals = calcTotals(state.draftInvoice.items, state.draftInvoice.discount, state.draftInvoice.vatRate);
+      const totals = calcTotals(state.draftInvoice.items, state.draftInvoice.discount, state.draftInvoice.vatRate, state.draftInvoice.rebatePct);
       return `
         <div class="grid two">
           <div class="card">
@@ -838,6 +848,10 @@
                   <option value="false" ${state.draftInvoice.paid ? "" : "selected"}>Neplaceno</option>
                   <option value="true" ${state.draftInvoice.paid ? "selected" : ""}>Placeno</option>
                 </select>
+              </div>
+              <div>
+                <label>RUC (fiskalizacija)</label>
+                <input id="invoice_ruc" placeholder="RUC kod" value="${state.draftInvoice.ruc || ""}" />
               </div>
               <div>
                 <label>Klijent</label>
@@ -891,7 +905,11 @@
             ${renderDraftItems(state.draftInvoice.items, "invoice")}
 
             <div class="divider"></div>
-            <div class="grid two">
+            <div class="grid three">
+              <div>
+                <label>Rabat (%)</label>
+                <input id="invoice_rebate" type="number" min="0" step="0.1" value="${state.draftInvoice.rebatePct}" />
+              </div>
               <div>
                 <label>Popust (EUR)</label>
                 <input id="invoice_discount" type="number" min="0" step="0.01" value="${state.draftInvoice.discount}" />
@@ -905,6 +923,7 @@
             <div class="row space">
               <div>
                 <div class="muted">Meduzbroj: ${fmtEur(totals.subtotal)}</div>
+                <div class="muted">Rabat: ${fmtEur(totals.rebateValue)}</div>
                 <div class="muted">Popust: ${fmtEur(totals.discountValue)}</div>
                 <div class="muted">PDV: ${fmtEur(totals.vat)}</div>
                 <strong>Ukupno: ${fmtEur(totals.total)}</strong>
@@ -921,7 +940,7 @@
             ${state.data.invoices.length === 0 ? `<p class="muted">Nema racuna.</p>` : `
               <div class="list">
                 ${state.data.invoices.slice().reverse().map(inv => {
-                  const total = calcTotals(inv.items, inv.discount, inv.vatRate).total;
+                  const total = calcTotals(inv.items, inv.discount, inv.vatRate, inv.rebatePct || 0).total;
                   return `
                     <div class="list-item">
                       <div class="row space align">
@@ -1297,6 +1316,14 @@
       $("#modal").setAttribute("aria-hidden", "true");
     }
 
+    $("#modal").addEventListener("click", (event) => {
+      if (event.target.id === "modal") closeModal();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeModal();
+    });
+
     function openSettings() {
       const { settings } = state.data;
       openModal("Postavke", `
@@ -1361,7 +1388,7 @@
     }
 
     function renderDocument(doc, type) {
-      const totals = calcTotals(doc.items, doc.discount, doc.vatRate);
+      const totals = calcTotals(doc.items, doc.discount, doc.vatRate, doc.rebatePct || 0);
       const company = state.data.settings.company;
       const title = type === "offer" ? "Ponuda" : "Racun";
       const html = `
@@ -1371,6 +1398,7 @@
           <div>OIB: ${company.oib}</div>
           <div>IBAN: ${company.iban}</div>
           <div>Kontakt: ${company.phone} · ${company.email}</div>
+          ${type === "invoice" && doc.ruc ? `<div>RUC: ${doc.ruc}</div>` : ""}
           <hr />
           <h2>${title} ${doc.number}</h2>
           <div>Datum: ${doc.date}</div>
@@ -1400,6 +1428,7 @@
           <hr />
           <div style="text-align:right;">
             <div>Meduzbroj: ${fmtEur(totals.subtotal)}</div>
+            <div>Rabat: ${fmtEur(totals.rebateValue)}</div>
             <div>Popust: ${fmtEur(totals.discountValue)}</div>
             <div>PDV: ${fmtEur(totals.vat)}</div>
             <h3>Ukupno: ${fmtEur(totals.total)}</h3>
@@ -1541,6 +1570,7 @@
       }
 
       let needsRender = false;
+      if (target.id === "offer_rebate") { state.draftOffer.rebatePct = Number(target.value) || 0; needsRender = true; }
       if (target.id === "offer_discount") { state.draftOffer.discount = Number(target.value) || 0; needsRender = true; }
       if (target.id === "offer_vat") { state.draftOffer.vatRate = Number(target.value) || 0; needsRender = true; }
       if (target.id === "offer_number") { state.draftOffer.number = target.value; needsRender = true; }
@@ -1549,6 +1579,7 @@
       if (target.id === "offer_phone") { state.draftOffer.phone = target.value; needsRender = true; }
       if (target.id === "offer_address") { state.draftOffer.address = target.value; needsRender = true; }
       if (target.id === "offer_notes") { state.draftOffer.notes = target.value; needsRender = true; }
+      if (target.id === "invoice_rebate") { state.draftInvoice.rebatePct = Number(target.value) || 0; needsRender = true; }
       if (target.id === "invoice_discount") { state.draftInvoice.discount = Number(target.value) || 0; needsRender = true; }
       if (target.id === "invoice_vat") { state.draftInvoice.vatRate = Number(target.value) || 0; needsRender = true; }
       if (target.id === "invoice_number") { state.draftInvoice.number = target.value; needsRender = true; }
@@ -1557,6 +1588,7 @@
       if (target.id === "invoice_customer") { state.draftInvoice.customer = target.value; needsRender = true; }
       if (target.id === "invoice_phone") { state.draftInvoice.phone = target.value; needsRender = true; }
       if (target.id === "invoice_address") { state.draftInvoice.address = target.value; needsRender = true; }
+      if (target.id === "invoice_ruc") { state.draftInvoice.ruc = target.value; needsRender = true; }
       if (target.id === "invoice_notes") { state.draftInvoice.notes = target.value; needsRender = true; }
       if (target.id === "invoice_paid") { state.draftInvoice.paid = target.value === "true"; needsRender = true; }
       if (needsRender) render();
@@ -1665,6 +1697,7 @@
         items: offer.items.map(i => ({ ...i })),
         notes: offer.notes,
         discount: offer.discount,
+        rebatePct: offer.rebatePct || 0,
         vatRate: offer.vatRate
       };
       setView("invoices");
@@ -1698,6 +1731,7 @@
         items: offer.items.map(i => ({ ...i })),
         notes: offer.notes,
         discount: offer.discount,
+        rebatePct: offer.rebatePct || 0,
         vatRate: offer.vatRate
       };
       render();
@@ -1805,7 +1839,7 @@
         const p = products.find(prod => prod.id === ci.id);
         return { id: p.id, name: p.name, qty: ci.qty, unit: p.unit, price: p.price };
       });
-      const total = calcTotals(items, 0, 0).total;
+      const total = calcTotals(items, 0, 0, 0).total;
       const order = {
         id: uid(),
         number: "WEB-" + Date.now().toString().slice(-6),
