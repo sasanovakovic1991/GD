@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VodoPro Studio | Ponude, Racuni, Lager</title>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
     :root {
       --bg: #f6f7fb;
@@ -40,6 +42,7 @@
       color: var(--text);
       font-size: 18px;
       line-height: 1.5;
+      transition: background 0.35s ease, color 0.35s ease;
     }
     body.size-lg { font-size: 20px; }
     body.size-lg .btn { padding: 14px 18px; }
@@ -55,7 +58,7 @@
       position: sticky;
       top: 0;
       z-index: 50;
-      background: var(--card);
+      background: rgba(255, 255, 255, 0.88);
       border-bottom: 1px solid var(--line);
       box-shadow: var(--shadow);
       padding: 14px 20px;
@@ -63,6 +66,11 @@
       gap: 16px;
       align-items: center;
       justify-content: space-between;
+      backdrop-filter: blur(12px);
+      transition: background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+    }
+    body[data-theme="dark"] header {
+      background: rgba(16, 24, 39, 0.88);
     }
     .brand {
       display: flex;
@@ -108,6 +116,7 @@
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
+      transition: background 0.35s ease;
     }
     .tab {
       padding: 10px 14px;
@@ -116,6 +125,7 @@
       background: var(--card);
       font-weight: 600;
       cursor: pointer;
+      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
     }
     .tab.active {
       background: var(--accent);
@@ -139,6 +149,7 @@
       border-radius: var(--radius);
       padding: 16px;
       box-shadow: var(--shadow);
+      transition: background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease, color 0.35s ease;
     }
     .card h2, .card h3 { margin: 0 0 12px 0; }
     .muted { color: var(--muted); }
@@ -152,6 +163,7 @@
       font-weight: 600;
       cursor: pointer;
       min-height: 44px;
+      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
     }
     .btn.primary { background: var(--accent); color: white; border-color: transparent; }
     .btn.accent { background: var(--accent-2); color: #052e2b; border-color: transparent; }
@@ -167,6 +179,7 @@
       font-size: 1rem;
       background: var(--card);
       color: var(--text);
+      transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
     }
     textarea { min-height: 90px; resize: vertical; }
     label { font-size: 14px; color: var(--muted); display: block; margin-bottom: 4px; }
@@ -279,6 +292,44 @@
     .modal-header { display: flex; justify-content: space-between; align-items: center; }
     .modal-header .close-btn { border-radius: 999px; }
 
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.9rem;
+    }
+    .switch input { display: none; }
+    .switch .slider {
+      width: 54px;
+      height: 30px;
+      border-radius: 999px;
+      background: var(--line);
+      position: relative;
+      transition: background 0.3s ease;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
+    }
+    .switch .slider::after {
+      content: "";
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      top: 3px;
+      left: 3px;
+      border-radius: 50%;
+      background: var(--card);
+      transition: transform 0.3s ease, background 0.3s ease;
+      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.2);
+    }
+    .switch input:checked + .slider {
+      background: var(--accent);
+    }
+    .switch input:checked + .slider::after {
+      transform: translateX(24px);
+    }
+    .switch-text { color: var(--muted); font-weight: 600; }
+
     .toast {
       position: fixed;
       bottom: 20px;
@@ -320,6 +371,11 @@
         <button class="btn ghost" data-action="new-offer">Nova ponuda</button>
         <button class="btn primary" data-action="new-invoice">Novi racun</button>
         <button class="btn" data-action="open-settings">Postavke</button>
+        <label class="switch" title="Tema">
+          <input type="checkbox" id="theme_toggle" />
+          <span class="slider"></span>
+          <span class="switch-text" id="theme_label">Svijetla</span>
+        </label>
       </div>
     </header>
 
@@ -330,6 +386,7 @@
       <button class="tab" data-action="switch-view" data-view="inventory">Lager</button>
       <button class="tab" data-action="switch-view" data-view="analysis">Analiza</button>
       <button class="tab" data-action="switch-view" data-view="compare">Usporedba</button>
+      <button class="tab" data-action="switch-view" data-view="packages">Paketi</button>
       <button class="tab" data-action="switch-view" data-view="shop">Webshop</button>
     </nav>
 
@@ -340,6 +397,7 @@
       <section id="view-inventory" class="view"></section>
       <section id="view-analysis" class="view"></section>
       <section id="view-compare" class="view"></section>
+      <section id="view-packages" class="view"></section>
       <section id="view-shop" class="view"></section>
     </main>
   </div>
@@ -361,48 +419,11 @@
     const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
     const STORAGE_KEY = "vodopro.v1";
 
-    const seedData = {
-      settings: {
-        company: {
-          name: "VodoPro Servis",
-          address: "Primjer ulica 1, 10000 Zagreb",
-          oib: "12345678901",
-          iban: "HR1210010051863000160",
-          phone: "+385 91 000 0000",
-          email: "info@vodopro.hr"
-        },
-        vatRate: 25,
-        paymentDays: 8,
-        lowStock: 5,
-        invoiceSeq: 1,
-        offerSeq: 1,
-        autoStock: true,
-        theme: "light",
-        largeText: true
-      },
-      inventory: [
-        { id: uid(), name: "PEX-AL-PEX cijev 20mm", category: "Cijevi", unit: "m", stock: 280, cost: 1.6, price: 3.2, webshop: false, tier: "standard", sku: "PEX20" },
-        { id: uid(), name: "PVC cijev 20mm", category: "Cijevi", unit: "m", stock: 320, cost: 1.1, price: 2.2, webshop: false, tier: "basic", sku: "PVC20" },
-        { id: uid(), name: "Nehrdajuca cijev 20mm", category: "Cijevi", unit: "m", stock: 140, cost: 2.4, price: 4.5, webshop: false, tier: "premium", sku: "INOX20" },
-        { id: uid(), name: "Kondenzacijski bojler 24kW", category: "Grijanje", unit: "kom", stock: 6, cost: 680, price: 980, webshop: false, tier: "premium", sku: "BOJ24" },
-        { id: uid(), name: "Kombi bojler 24kW", category: "Grijanje", unit: "kom", stock: 5, cost: 520, price: 820, webshop: false, tier: "standard", sku: "KMB24" },
-        { id: uid(), name: "Radijator 1200mm", category: "Grijanje", unit: "kom", stock: 24, cost: 55, price: 95, webshop: false, tier: "standard", sku: "RAD1200" },
-        { id: uid(), name: "Termostatska glava", category: "Regulacija", unit: "kom", stock: 80, cost: 6.5, price: 12, webshop: true, tier: "standard", sku: "TH01" },
-        { id: uid(), name: "Mjesac ventila set", category: "Regulacija", unit: "set", stock: 12, cost: 58, price: 110, webshop: false, tier: "premium", sku: "MIX01" },
-        { id: uid(), name: "WC set kvalitetni", category: "Sanitarije", unit: "kom", stock: 9, cost: 120, price: 220, webshop: true, tier: "premium", sku: "WC99" },
-        { id: uid(), name: "WC set osnovni", category: "Sanitarije", unit: "kom", stock: 14, cost: 70, price: 140, webshop: true, tier: "basic", sku: "WC10" },
-        { id: uid(), name: "Slavina za sudoper", category: "Sanitarije", unit: "kom", stock: 18, cost: 28, price: 65, webshop: true, tier: "standard", sku: "SL01" },
-        { id: uid(), name: "Tus komplet", category: "Sanitarije", unit: "kom", stock: 11, cost: 48, price: 98, webshop: true, tier: "standard", sku: "TUS01" }
-      ],
-      offers: [],
-      invoices: [],
-      orders: []
-    };
-
-    const templates = [
+    const defaultProjects = [
       {
-        id: "cg-stan",
+        id: uid(),
         name: "Centralno grijanje - stan do 70m2",
+        description: "Standardni paket za stan s centralnim grijanjem.",
         tiers: {
           basic: [
             { name: "PVC cijev 20mm", qty: 80, unit: "m", price: 2.2 },
@@ -425,8 +446,9 @@
         }
       },
       {
-        id: "bath",
+        id: uid(),
         name: "Kupaonica - sanitarije komplet",
+        description: "Paket sanitarija s vise rangova opreme.",
         tiers: {
           basic: [
             { name: "WC set osnovni", qty: 1, unit: "kom", price: 140 },
@@ -448,6 +470,65 @@
       }
     ];
 
+    const defaultBundles = [
+      {
+        id: uid(),
+        name: "Sanitarni paket Standard",
+        category: "Sanitarije",
+        price: 690,
+        description: "Paket za brzo opremanje kupaonice.",
+        items: ["WC set kvalitetni", "Daska soft-close", "Tus sistem", "Slavina za sudoper"],
+        image: ""
+      }
+    ];
+
+    const seedData = {
+      settings: {
+        company: {
+          name: "VodoPro Servis",
+          address: "Primjer ulica 1, 10000 Zagreb",
+          oib: "12345678901",
+          iban: "HR1210010051863000160",
+          phone: "+385 91 000 0000",
+          email: "info@vodopro.hr"
+        },
+        vatRate: 25,
+        paymentDays: 8,
+        lowStock: 5,
+        invoiceSeq: 1,
+        offerSeq: 1,
+        autoStock: true,
+        theme: "light",
+        largeText: true,
+        fiscal: {
+          office: "PP1",
+          device: "UR1",
+          operator: "Operater",
+          operatorOib: "",
+          paymentMethod: "Transakcijski racun"
+        }
+      },
+      inventory: [
+        { id: uid(), name: "PEX-AL-PEX cijev 20mm", category: "Cijevi", unit: "m", stock: 280, cost: 1.6, price: 3.2, webshop: false, tier: "standard", sku: "PEX20" },
+        { id: uid(), name: "PVC cijev 20mm", category: "Cijevi", unit: "m", stock: 320, cost: 1.1, price: 2.2, webshop: false, tier: "basic", sku: "PVC20" },
+        { id: uid(), name: "Nehrdajuca cijev 20mm", category: "Cijevi", unit: "m", stock: 140, cost: 2.4, price: 4.5, webshop: false, tier: "premium", sku: "INOX20" },
+        { id: uid(), name: "Kondenzacijski bojler 24kW", category: "Grijanje", unit: "kom", stock: 6, cost: 680, price: 980, webshop: false, tier: "premium", sku: "BOJ24" },
+        { id: uid(), name: "Kombi bojler 24kW", category: "Grijanje", unit: "kom", stock: 5, cost: 520, price: 820, webshop: false, tier: "standard", sku: "KMB24" },
+        { id: uid(), name: "Radijator 1200mm", category: "Grijanje", unit: "kom", stock: 24, cost: 55, price: 95, webshop: false, tier: "standard", sku: "RAD1200" },
+        { id: uid(), name: "Termostatska glava", category: "Regulacija", unit: "kom", stock: 80, cost: 6.5, price: 12, webshop: true, tier: "standard", sku: "TH01" },
+        { id: uid(), name: "Mjesac ventila set", category: "Regulacija", unit: "set", stock: 12, cost: 58, price: 110, webshop: false, tier: "premium", sku: "MIX01" },
+        { id: uid(), name: "WC set kvalitetni", category: "Sanitarije", unit: "kom", stock: 9, cost: 120, price: 220, webshop: true, tier: "premium", sku: "WC99" },
+        { id: uid(), name: "WC set osnovni", category: "Sanitarije", unit: "kom", stock: 14, cost: 70, price: 140, webshop: true, tier: "basic", sku: "WC10" },
+        { id: uid(), name: "Slavina za sudoper", category: "Sanitarije", unit: "kom", stock: 18, cost: 28, price: 65, webshop: true, tier: "standard", sku: "SL01" },
+        { id: uid(), name: "Tus komplet", category: "Sanitarije", unit: "kom", stock: 11, cost: 48, price: 98, webshop: true, tier: "standard", sku: "TUS01" }
+      ],
+      offers: [],
+      invoices: [],
+      orders: [],
+      projects: defaultProjects,
+      bundles: defaultBundles
+    };
+
     const initialData = loadData();
 
     let state = {
@@ -455,10 +536,12 @@
       view: "dashboard",
       draftOffer: createOfferDraft(initialData),
       draftInvoice: createInvoiceDraft(initialData),
+      draftBundle: createBundleDraft(),
       cart: [],
       shopQuery: "",
       shopCategory: "all",
-      selectedTemplate: templates[0].id
+      selectedProjectId: initialData.projects?.[0]?.id || "",
+      editTiers: false
     };
 
     function uid() {
@@ -471,15 +554,30 @@
       return JSON.parse(JSON.stringify(obj));
     }
 
+    function normalizeData(data) {
+      const base = clone(seedData);
+      const normalized = { ...base, ...data };
+      normalized.settings = { ...base.settings, ...(data?.settings || {}) };
+      normalized.settings.company = { ...base.settings.company, ...(data?.settings?.company || {}) };
+      normalized.settings.fiscal = { ...base.settings.fiscal, ...(data?.settings?.fiscal || {}) };
+      normalized.inventory = Array.isArray(data?.inventory) ? data.inventory : base.inventory;
+      normalized.offers = Array.isArray(data?.offers) ? data.offers : [];
+      normalized.invoices = Array.isArray(data?.invoices) ? data.invoices : [];
+      normalized.orders = Array.isArray(data?.orders) ? data.orders : [];
+      normalized.projects = Array.isArray(data?.projects) ? data.projects : base.projects;
+      normalized.bundles = Array.isArray(data?.bundles) ? data.bundles : base.bundles;
+      return normalized;
+    }
+
     function loadData() {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return clone(seedData);
+      if (!raw) return normalizeData({});
       try {
         const parsed = JSON.parse(raw);
-        return { ...clone(seedData), ...parsed };
+        return normalizeData(parsed);
       } catch (err) {
         console.warn("Bad data, using seed", err);
-        return clone(seedData);
+        return normalizeData({});
       }
     }
 
@@ -489,6 +587,12 @@
 
     function todayISO() {
       return new Date().toISOString().slice(0, 10);
+    }
+
+    function nowLocalIso() {
+      const dt = new Date();
+      dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset());
+      return dt.toISOString().slice(0, 16);
     }
 
     function createOfferDraft(data = state.data) {
@@ -524,7 +628,27 @@
         rebatePct: 0,
         vatRate: settings.vatRate ?? 25,
         ruc: "",
+        jir: "",
+        zki: "",
+        office: settings.fiscal?.office || "",
+        device: settings.fiscal?.device || "",
+        operator: settings.fiscal?.operator || "",
+        operatorOib: settings.fiscal?.operatorOib || "",
+        paymentMethod: settings.fiscal?.paymentMethod || "",
+        issueTime: nowLocalIso(),
         notes: ""
+      };
+    }
+
+    function createBundleDraft(bundle) {
+      return {
+        id: bundle?.id || uid(),
+        name: bundle?.name || "",
+        category: bundle?.category || "Sanitarije",
+        price: Number(bundle?.price || 0),
+        description: bundle?.description || "",
+        items: bundle?.items ? [...bundle.items] : [],
+        image: bundle?.image || ""
       };
     }
 
@@ -601,6 +725,14 @@
       const { theme, largeText } = state.data.settings;
       document.body.dataset.theme = theme;
       document.body.classList.toggle("size-lg", largeText);
+      syncThemeToggle();
+    }
+
+    function syncThemeToggle() {
+      const toggle = $("#theme_toggle");
+      if (toggle) toggle.checked = state.data.settings.theme === "dark";
+      const label = $("#theme_label");
+      if (label) label.textContent = state.data.settings.theme === "dark" ? "Tamna" : "Svijetla";
     }
 
     function setView(view) {
@@ -619,6 +751,7 @@
       $("#view-inventory").innerHTML = renderInventory();
       $("#view-analysis").innerHTML = renderAnalysis();
       $("#view-compare").innerHTML = renderComparison();
+      $("#view-packages").innerHTML = renderPackages();
       $("#view-shop").innerHTML = renderShop();
     }
 
@@ -803,6 +936,7 @@
                       <div class="muted">${offer.customer || "Bez klijenta"} · ${offer.date}</div>
                       <div class="row">
                         <button class="btn small" data-action="preview-offer" data-id="${offer.id}">Pregled</button>
+                        <button class="btn small" data-action="pdf-offer" data-id="${offer.id}">PDF</button>
                         <button class="btn small" data-action="convert-offer" data-id="${offer.id}">Pretvori u racun</button>
                         <button class="btn small" data-action="duplicate-offer" data-id="${offer.id}">Dupliciraj</button>
                         <button class="btn small danger" data-action="delete-offer" data-id="${offer.id}">Obrisi</button>
@@ -850,10 +984,6 @@
                 </select>
               </div>
               <div>
-                <label>RUC (fiskalizacija)</label>
-                <input id="invoice_ruc" placeholder="RUC kod" value="${state.draftInvoice.ruc || ""}" />
-              </div>
-              <div>
                 <label>Klijent</label>
                 <input id="invoice_customer" placeholder="Ime i prezime / tvrtka" value="${state.draftInvoice.customer}" />
               </div>
@@ -864,6 +994,51 @@
               <div class="grid" style="grid-column:1/-1;">
                 <label>Adresa</label>
                 <input id="invoice_address" placeholder="Adresa objekta" value="${state.draftInvoice.address}" />
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <h3>Fiskalizacija</h3>
+            <div class="grid two">
+              <div>
+                <label>RUC</label>
+                <input id="invoice_ruc" placeholder="RUC kod" value="${state.draftInvoice.ruc || ""}" />
+              </div>
+              <div>
+                <label>JIR</label>
+                <input id="invoice_jir" placeholder="JIR kod" value="${state.draftInvoice.jir || ""}" />
+              </div>
+              <div>
+                <label>ZKI</label>
+                <input id="invoice_zki" placeholder="ZKI kod" value="${state.draftInvoice.zki || ""}" />
+              </div>
+              <div>
+                <label>Poslovni prostor</label>
+                <input id="invoice_office" placeholder="Oznaka prostora" value="${state.draftInvoice.office || ""}" />
+              </div>
+              <div>
+                <label>Naplatni uredaj</label>
+                <input id="invoice_device" placeholder="Oznaka uredaja" value="${state.draftInvoice.device || ""}" />
+              </div>
+              <div>
+                <label>Operater</label>
+                <input id="invoice_operator" placeholder="Ime operatera" value="${state.draftInvoice.operator || ""}" />
+              </div>
+              <div>
+                <label>OIB operatera</label>
+                <input id="invoice_operator_oib" placeholder="OIB operatera" value="${state.draftInvoice.operatorOib || ""}" />
+              </div>
+              <div>
+                <label>Nacin placanja</label>
+                <select id="invoice_payment">
+                  ${["Gotovina","Kartica","Transakcijski racun"].map(method => `
+                    <option value="${method}" ${state.draftInvoice.paymentMethod === method ? "selected" : ""}>${method}</option>
+                  `).join("")}
+                </select>
+              </div>
+              <div>
+                <label>Vrijeme izdavanja</label>
+                <input id="invoice_issue_time" type="datetime-local" value="${state.draftInvoice.issueTime || ""}" />
               </div>
             </div>
 
@@ -951,6 +1126,7 @@
                       <div class="muted">Ukupno: ${fmtEur(total)}</div>
                       <div class="row">
                         <button class="btn small" data-action="preview-invoice" data-id="${inv.id}">Pregled</button>
+                        <button class="btn small" data-action="pdf-invoice" data-id="${inv.id}">PDF</button>
                         <button class="btn small" data-action="toggle-paid" data-id="${inv.id}">${inv.paid ? "Oznaci neplaceno" : "Oznaci placeno"}</button>
                         <button class="btn small danger" data-action="delete-invoice" data-id="${inv.id}">Obrisi</button>
                       </div>
@@ -1175,24 +1351,163 @@
       `;
     }
 
+    function getSelectedProject() {
+      const projects = state.data.projects || [];
+      if (!projects.length) return null;
+      let project = projects.find(p => p.id === state.selectedProjectId);
+      if (!project) {
+        project = projects[0];
+        state.selectedProjectId = project.id;
+      }
+      return project;
+    }
+
+    function addProject() {
+      const nameInput = $("#project_new_name");
+      const descInput = $("#project_new_desc");
+      const name = nameInput ? nameInput.value.trim() : "";
+      if (!name) return toast("Upisite naziv projekta.");
+      const desc = descInput ? descInput.value.trim() : "";
+      const project = {
+        id: uid(),
+        name,
+        description: desc,
+        tiers: { basic: [], standard: [], premium: [] }
+      };
+      state.data.projects.push(project);
+      state.selectedProjectId = project.id;
+      saveData();
+      render();
+    }
+
+    function deleteProject(id) {
+      if (!confirm("Obrisati projekt?")) return;
+      state.data.projects = state.data.projects.filter(p => p.id !== id);
+      state.selectedProjectId = state.data.projects[0]?.id || "";
+      saveData();
+      render();
+    }
+
+    function duplicateProject(id) {
+      const project = state.data.projects.find(p => p.id === id);
+      if (!project) return;
+      const copy = clone(project);
+      copy.id = uid();
+      copy.name = `${project.name} (kopija)`;
+      state.data.projects.push(copy);
+      state.selectedProjectId = copy.id;
+      saveData();
+      render();
+    }
+
+    function addTierItem(tier, mode) {
+      const project = getSelectedProject();
+      if (!project) return;
+      if (!project.tiers[tier]) project.tiers[tier] = [];
+      if (mode === "inventory") {
+        const select = $(`#tier_${tier}_select`);
+        const qtyInput = $(`#tier_${tier}_qty`);
+        const priceInput = $(`#tier_${tier}_price`);
+        const id = select.value;
+        if (!id) return toast("Odaberite artikl.");
+        const item = state.data.inventory.find(i => i.id === id);
+        const qty = Number(qtyInput.value || 0);
+        if (qty <= 0) return toast("Unesite kolicinu.");
+        const price = Number(priceInput.value || item.price);
+        project.tiers[tier].push({ id, name: item.name, qty, unit: item.unit, price });
+        select.value = "";
+        qtyInput.value = "";
+        priceInput.value = "";
+      } else {
+        const nameInput = $(`#tier_${tier}_manual_name`);
+        const qtyInput = $(`#tier_${tier}_manual_qty`);
+        const priceInput = $(`#tier_${tier}_manual_price`);
+        const unitInput = $(`#tier_${tier}_manual_unit`);
+        const name = nameInput.value.trim();
+        const qty = Number(qtyInput.value || 0);
+        if (!name) return toast("Upisite naziv.");
+        if (qty <= 0) return toast("Unesite kolicinu.");
+        project.tiers[tier].push({
+          id: null,
+          name,
+          qty,
+          unit: unitInput.value.trim() || "kom",
+          price: Number(priceInput.value || 0)
+        });
+        nameInput.value = "";
+        qtyInput.value = "";
+        priceInput.value = "";
+        unitInput.value = "";
+      }
+      saveData();
+      render();
+    }
+
+    function removeTierItem(tier, index) {
+      const project = getSelectedProject();
+      if (!project) return;
+      project.tiers[tier].splice(Number(index), 1);
+      saveData();
+      render();
+    }
+
     function renderComparison() {
-      const tpl = templates.find(t => t.id === state.selectedTemplate) || templates[0];
+      const project = getSelectedProject();
+      if (!project) {
+        return `
+          <div class="card">
+            <h2>Usporedba ponuda</h2>
+            <p class="muted">Nema projekata. Dodajte novi projekt ispod.</p>
+            <label>Naziv projekta</label>
+            <input id="project_new_name" placeholder="Npr. Centralno grijanje - kuca" />
+            <label style="margin-top:8px;">Opis</label>
+            <input id="project_new_desc" placeholder="Kratki opis projekta" />
+            <button class="btn primary" style="margin-top:12px;" data-action="add-project">Dodaj projekt</button>
+          </div>
+        `;
+      }
       return `
-        <div class="card">
-          <h2>Usporedba ponuda</h2>
-          <label>Tip projekta</label>
-          <select id="template_select">
-            ${templates.map(t => `<option value="${t.id}" ${t.id === tpl.id ? "selected" : ""}>${t.name}</option>`).join("")}
-          </select>
+        <div class="grid two">
+          <div class="card">
+            <h2>Usporedba ponuda</h2>
+            <label>Projekt</label>
+            <select id="project_select">
+              ${state.data.projects.map(p => `<option value="${p.id}" ${p.id === project.id ? "selected" : ""}>${p.name}</option>`).join("")}
+            </select>
+            <div class="divider"></div>
+            <label>Naziv projekta</label>
+            <input id="project_name" value="${project.name}" />
+            <label style="margin-top:8px;">Opis</label>
+            <input id="project_desc" value="${project.description || ""}" />
+            <div class="row" style="margin-top:12px;">
+              <button class="btn" data-action="duplicate-project" data-id="${project.id}">Dupliciraj</button>
+              <button class="btn danger" data-action="delete-project" data-id="${project.id}">Obrisi</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Novi projekt</h3>
+            <label>Naziv</label>
+            <input id="project_new_name" placeholder="Novi projekt" />
+            <label style="margin-top:8px;">Opis</label>
+            <input id="project_new_desc" placeholder="Kratki opis" />
+            <button class="btn primary" style="margin-top:12px;" data-action="add-project">Dodaj projekt</button>
+          </div>
+        </div>
+        <div class="row align" style="margin-top:16px;">
+          <label class="switch">
+            <input type="checkbox" id="edit_tiers_toggle" ${state.editTiers ? "checked" : ""} />
+            <span class="slider"></span>
+            <span class="switch-text">Uredi rangove ugradnje</span>
+          </label>
         </div>
         <div class="grid three" style="margin-top:16px;">
-          ${["basic", "standard", "premium"].map(tier => renderTierCard(tpl, tier)).join("")}
+          ${["basic", "standard", "premium"].map(tier => renderTierCard(project, tier)).join("")}
         </div>
       `;
     }
 
-    function renderTierCard(template, tier) {
-      const items = template.tiers[tier];
+    function renderTierCard(project, tier) {
+      const items = project.tiers?.[tier] || [];
       const total = items.reduce((sum, item) => sum + item.qty * item.price, 0);
       const labelMap = { basic: "Jeftino", standard: "Srednje", premium: "Vrhunsko" };
       return `
@@ -1202,17 +1517,115 @@
             <span class="pill">${fmtEur(total)}</span>
           </div>
           <div class="list">
-            ${items.map(item => `
+            ${items.length ? items.map((item, idx) => `
               <div class="list-item">
                 <div class="row space align">
                   <strong>${item.name}</strong>
                   <span class="pill">${item.qty} ${item.unit}</span>
                 </div>
                 <div class="muted">${fmtEur(item.price)} / ${item.unit}</div>
+                ${state.editTiers ? `
+                  <div class="row align" style="margin-top:8px;">
+                    <input type="number" min="0" step="0.1" value="${item.qty}" data-action="edit-tier-item" data-tier="${tier}" data-index="${idx}" data-field="qty" />
+                    <input value="${item.unit}" data-action="edit-tier-item" data-tier="${tier}" data-index="${idx}" data-field="unit" />
+                    <input type="number" min="0" step="0.01" value="${item.price}" data-action="edit-tier-item" data-tier="${tier}" data-index="${idx}" data-field="price" />
+                    <button class="btn small danger" data-action="remove-tier-item" data-tier="${tier}" data-index="${idx}">Ukloni</button>
+                  </div>
+                ` : ""}
               </div>
-            `).join("")}
+            `).join("") : `<p class="muted">Nema stavki u ovom rangu.</p>`}
           </div>
-          <button class="btn primary" style="margin-top:12px;" data-action="tier-to-offer" data-tier="${tier}">Pretvori u ponudu</button>
+          ${state.editTiers ? `
+            <div class="divider"></div>
+            <h4>Dodaj iz lagera</h4>
+            <div class="row align">
+              <select id="tier_${tier}_select">
+                <option value="">Odaberi artikl</option>
+                ${state.data.inventory.map(item => `<option value="${item.id}">${item.name}</option>`).join("")}
+              </select>
+              <input id="tier_${tier}_qty" type="number" min="0" step="0.1" placeholder="Kolicina" />
+              <input id="tier_${tier}_price" type="number" min="0" step="0.01" placeholder="Cijena" />
+              <button class="btn small" data-action="add-tier-item" data-tier="${tier}" data-mode="inventory">Dodaj</button>
+            </div>
+            <div class="divider"></div>
+            <h4>Rucna stavka</h4>
+            <div class="row align">
+              <input id="tier_${tier}_manual_name" placeholder="Naziv" />
+              <input id="tier_${tier}_manual_qty" type="number" min="0" step="0.1" placeholder="Kolicina" />
+              <input id="tier_${tier}_manual_unit" placeholder="Jedinica" />
+              <input id="tier_${tier}_manual_price" type="number" min="0" step="0.01" placeholder="Cijena" />
+              <button class="btn small" data-action="add-tier-item" data-tier="${tier}" data-mode="manual">Dodaj</button>
+            </div>
+          ` : `
+            <button class="btn primary" style="margin-top:12px;" data-action="tier-to-offer" data-tier="${tier}">Pretvori u ponudu</button>
+          `}
+        </div>
+      `;
+    }
+
+    function renderPackages() {
+      const bundle = state.draftBundle;
+      return `
+        <div class="grid two">
+          <div class="card">
+            <h2>${bundle.name ? "Uredi paket" : "Novi paket"}</h2>
+            <label>Naziv paketa</label>
+            <input id="bundle_name" placeholder="Npr. Kupaonica Premium" value="${bundle.name}" />
+            <label style="margin-top:8px;">Kategorija</label>
+            <input id="bundle_category" placeholder="Sanitarije / Grijanje" value="${bundle.category}" />
+            <label style="margin-top:8px;">Cijena (EUR)</label>
+            <input id="bundle_price" type="number" min="0" step="0.01" value="${bundle.price}" />
+            <label style="margin-top:8px;">Opis</label>
+            <textarea id="bundle_desc" placeholder="Kratki opis paketa">${bundle.description}</textarea>
+
+            <div class="divider"></div>
+            <label>Dodaj stavku u paket</label>
+            <div class="row align">
+              <input id="bundle_item_input" placeholder="Npr. Vodokotlic + skoljka + daska" />
+              <button class="btn" data-action="bundle-add-item">Dodaj</button>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              ${bundle.items.map((item, idx) => `
+                <span class="pill">${item} <button class="btn small danger" data-action="bundle-remove-item" data-index="${idx}">x</button></span>
+              `).join("") || `<span class="muted">Nema stavki.</span>`}
+            </div>
+
+            <div class="divider"></div>
+            <label>Fotografija paketa</label>
+            <input id="bundle_image" type="file" accept="image/*" />
+            ${bundle.image ? `<img src="${bundle.image}" alt="Paket" style="width:100%;max-height:220px;object-fit:cover;border-radius:12px;margin-top:10px;" />` : `<div class="muted" style="margin-top:8px;">Nema fotografije.</div>`}
+
+            <div class="row" style="margin-top:12px;">
+              <button class="btn primary" data-action="bundle-save">Spremi paket</button>
+              <button class="btn" data-action="bundle-reset">Novi</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Gotovi paketi</h2>
+            ${state.data.bundles.length === 0 ? `<p class="muted">Nema paketa.</p>` : `
+              <div class="list">
+                ${state.data.bundles.map(b => `
+                  <div class="list-item">
+                    <div class="row space align">
+                      <strong>${b.name}</strong>
+                      <span class="pill">${fmtEur(b.price)}</span>
+                    </div>
+                    ${b.image ? `<img src="${b.image}" alt="${b.name}" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;" />` : ""}
+                    <div class="muted">${b.description || ""}</div>
+                    <div class="row">
+                      ${b.items.map(item => `<span class="pill">${item}</span>`).join("")}
+                    </div>
+                    <div class="row" style="margin-top:8px;">
+                      <button class="btn small" data-action="bundle-edit" data-id="${b.id}">Uredi</button>
+                      <button class="btn small" data-action="bundle-to-offer" data-id="${b.id}">Dodaj u ponudu</button>
+                      <button class="btn small danger" data-action="bundle-delete" data-id="${b.id}">Obrisi</button>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+          </div>
         </div>
       `;
     }
@@ -1361,6 +1774,26 @@
             <input type="number" data-setting="paymentDays" value="${settings.paymentDays}" />
           </div>
           <div>
+            <label>Fiskalizacija: poslovni prostor</label>
+            <input data-setting="fiscal.office" value="${settings.fiscal.office}" />
+          </div>
+          <div>
+            <label>Fiskalizacija: naplatni uredaj</label>
+            <input data-setting="fiscal.device" value="${settings.fiscal.device}" />
+          </div>
+          <div>
+            <label>Fiskalizacija: operater</label>
+            <input data-setting="fiscal.operator" value="${settings.fiscal.operator}" />
+          </div>
+          <div>
+            <label>Fiskalizacija: OIB operatera</label>
+            <input data-setting="fiscal.operatorOib" value="${settings.fiscal.operatorOib}" />
+          </div>
+          <div>
+            <label>Fiskalizacija: nacin placanja</label>
+            <input data-setting="fiscal.paymentMethod" value="${settings.fiscal.paymentMethod}" />
+          </div>
+          <div>
             <label>Vizualna tema</label>
             <select data-setting="theme">
               <option value="light" ${settings.theme === "light" ? "selected" : ""}>Svijetla</option>
@@ -1387,18 +1820,31 @@
       `);
     }
 
-    function renderDocument(doc, type) {
+    function buildDocumentHTML(doc, type) {
       const totals = calcTotals(doc.items, doc.discount, doc.vatRate, doc.rebatePct || 0);
       const company = state.data.settings.company;
       const title = type === "offer" ? "Ponuda" : "Racun";
-      const html = `
+      const issueTime = doc.issueTime ? doc.issueTime.replace("T", " ") : "";
+      return `
         <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 800px;">
           <h2>${company.name}</h2>
           <div>${company.address}</div>
           <div>OIB: ${company.oib}</div>
           <div>IBAN: ${company.iban}</div>
           <div>Kontakt: ${company.phone} · ${company.email}</div>
-          ${type === "invoice" && doc.ruc ? `<div>RUC: ${doc.ruc}</div>` : ""}
+          ${type === "invoice" ? `
+            <div style="margin-top:8px;">
+              <strong>Fiskalizacija</strong>
+              ${doc.ruc ? `<div>RUC: ${doc.ruc}</div>` : ""}
+              ${doc.jir ? `<div>JIR: ${doc.jir}</div>` : ""}
+              ${doc.zki ? `<div>ZKI: ${doc.zki}</div>` : ""}
+              ${doc.office ? `<div>Poslovni prostor: ${doc.office}</div>` : ""}
+              ${doc.device ? `<div>Naplatni uredaj: ${doc.device}</div>` : ""}
+              ${doc.operator ? `<div>Operater: ${doc.operator}${doc.operatorOib ? ` (OIB: ${doc.operatorOib})` : ""}</div>` : ""}
+              ${doc.paymentMethod ? `<div>Nacin placanja: ${doc.paymentMethod}</div>` : ""}
+              ${issueTime ? `<div>Vrijeme izdavanja: ${issueTime}</div>` : ""}
+            </div>
+          ` : ""}
           <hr />
           <h2>${title} ${doc.number}</h2>
           <div>Datum: ${doc.date}</div>
@@ -1436,10 +1882,64 @@
           <div style="margin-top:12px;">Napomena: ${doc.notes || "-"}</div>
         </div>
       `;
+    }
+
+    function renderDocument(doc, type) {
+      const title = type === "offer" ? "Ponuda" : "Racun";
+      const html = buildDocumentHTML(doc, type);
       const win = window.open("", "_blank");
       win.document.write(`<html><head><title>${title} ${doc.number}</title></head><body>${html}</body></html>`);
       win.document.close();
       win.focus();
+    }
+
+    async function exportDocumentPDF(doc, type) {
+      if (!window.jspdf || !window.html2canvas) {
+        toast("PDF biblioteka nije dostupna.");
+        return;
+      }
+      let wrapper;
+      try {
+        toast("Izrada PDF-a...");
+        const html = buildDocumentHTML(doc, type);
+        wrapper = document.createElement("div");
+        wrapper.style.position = "fixed";
+        wrapper.style.left = "-9999px";
+        wrapper.style.top = "0";
+        wrapper.style.width = "800px";
+        wrapper.style.background = "#ffffff";
+        wrapper.innerHTML = html;
+        document.body.appendChild(wrapper);
+
+        const canvas = await html2canvas(wrapper, { scale: 2, backgroundColor: "#ffffff" });
+        const imgData = canvas.toDataURL("image/png");
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const imgWidth = pageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        let heightLeft = imgHeight;
+        let position = 0;
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+
+        while (heightLeft > 0) {
+          position = heightLeft - imgHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+        }
+        const filePrefix = type === "offer" ? "ponuda" : "racun";
+        const safeNumber = String(doc.number || "dokument").replace(/[^a-zA-Z0-9_-]+/g, "-");
+        pdf.save(`${filePrefix}_${safeNumber}.pdf`);
+      } catch (err) {
+        console.error(err);
+        toast("Greska pri izradi PDF-a.");
+      } finally {
+        if (wrapper && wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+      }
     }
 
     function updateStockFromInvoice(invoice) {
@@ -1473,6 +1973,7 @@
       if (name === "add-offer-manual") return addOfferManual();
       if (name === "add-invoice-item") return addInvoiceItem();
       if (name === "add-invoice-manual") return addInvoiceManual();
+      if (name === "pdf-offer") return exportOfferPDF(action.dataset.id);
       if (name === "save-offer") return saveOffer();
       if (name === "remove-draft-item") return removeDraftItem(action.dataset.type, action.dataset.index);
       if (name === "edit-draft-item") return;
@@ -1480,13 +1981,26 @@
       if (name === "convert-offer") return convertOffer(action.dataset.id);
       if (name === "duplicate-offer") return duplicateOffer(action.dataset.id);
       if (name === "delete-offer") return deleteOffer(action.dataset.id);
+      if (name === "pdf-invoice") return exportInvoicePDF(action.dataset.id);
       if (name === "save-invoice") return saveInvoice();
       if (name === "preview-invoice") return previewInvoice(action.dataset.id);
       if (name === "toggle-paid") return togglePaid(action.dataset.id);
       if (name === "delete-invoice") return deleteInvoice(action.dataset.id);
       if (name === "add-inventory") return addInventory();
       if (name === "delete-inventory") return deleteInventory(action.dataset.id);
+      if (name === "add-project") return addProject();
+      if (name === "delete-project") return deleteProject(action.dataset.id);
+      if (name === "duplicate-project") return duplicateProject(action.dataset.id);
+      if (name === "add-tier-item") return addTierItem(action.dataset.tier, action.dataset.mode);
+      if (name === "remove-tier-item") return removeTierItem(action.dataset.tier, action.dataset.index);
       if (name === "tier-to-offer") return tierToOffer(action.dataset.tier);
+      if (name === "bundle-add-item") return bundleAddItem();
+      if (name === "bundle-remove-item") return bundleRemoveItem(action.dataset.index);
+      if (name === "bundle-save") return saveBundle();
+      if (name === "bundle-reset") return resetBundle();
+      if (name === "bundle-edit") return editBundle(action.dataset.id);
+      if (name === "bundle-delete") return deleteBundle(action.dataset.id);
+      if (name === "bundle-to-offer") return bundleToOffer(action.dataset.id);
       if (name === "add-to-cart") return addToCart(action.dataset.id);
       if (name === "remove-cart") return removeFromCart(action.dataset.id);
       if (name === "checkout") return checkout();
@@ -1497,6 +2011,37 @@
 
     document.addEventListener("change", (event) => {
       const target = event.target;
+      if (target.id === "theme_toggle") {
+        state.data.settings.theme = target.checked ? "dark" : "light";
+        saveData();
+        return render();
+      }
+      if (target.id === "edit_tiers_toggle") {
+        state.editTiers = target.checked;
+        return render();
+      }
+      if (target.id === "project_select") {
+        state.selectedProjectId = target.value;
+        return render();
+      }
+      if (target.id === "project_name" || target.id === "project_desc") {
+        const project = getSelectedProject();
+        if (!project) return;
+        if (target.id === "project_name") project.name = target.value;
+        if (target.id === "project_desc") project.description = target.value;
+        saveData();
+        return render();
+      }
+      if (target.dataset.action === "edit-tier-item") {
+        const project = getSelectedProject();
+        if (!project) return;
+        const { tier, index, field } = target.dataset;
+        const item = project.tiers?.[tier]?.[Number(index)];
+        if (!item) return;
+        item[field] = target.type === "number" ? Number(target.value) : target.value;
+        saveData();
+        return render();
+      }
       if (target.dataset.action === "edit-draft-item") {
         const { type, index, field } = target.dataset;
         const draft = type === "offer" ? state.draftOffer : state.draftInvoice;
@@ -1532,6 +2077,20 @@
         loadOfferIntoInvoice(target.value);
         return;
       }
+      if (target.id === "bundle_image" && target.files && target.files[0]) {
+        const file = target.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+          state.draftBundle.image = reader.result;
+          render();
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+      if (target.id === "bundle_name") { state.draftBundle.name = target.value; return; }
+      if (target.id === "bundle_category") { state.draftBundle.category = target.value; return; }
+      if (target.id === "bundle_price") { state.draftBundle.price = Number(target.value) || 0; return; }
+      if (target.id === "bundle_desc") { state.draftBundle.description = target.value; return; }
       if (target.id === "offer_item_select") {
         const item = state.data.inventory.find(i => i.id === target.value);
         if (item) {
@@ -1548,9 +2107,17 @@
         }
         return;
       }
-      if (target.id === "template_select") {
-        state.selectedTemplate = target.value;
-        return render();
+      if (target.id.startsWith("tier_") && target.id.endsWith("_select")) {
+        const parts = target.id.split("_");
+        const tier = parts[1];
+        const item = state.data.inventory.find(i => i.id === target.value);
+        if (item) {
+          const priceInput = $(`#tier_${tier}_price`);
+          const qtyInput = $(`#tier_${tier}_qty`);
+          if (priceInput) priceInput.value = item.price;
+          if (qtyInput && !qtyInput.value) qtyInput.value = 1;
+        }
+        return;
       }
       if (target.id === "import_file" && target.files.length) {
         importData(target.files[0]);
@@ -1559,10 +2126,6 @@
       if (target.dataset.action === "update-cart") {
         updateCart(target.dataset.id, target.value);
         return;
-      }
-      if (target.dataset.action === "shop-search") {
-        state.shopQuery = target.value;
-        return render();
       }
       if (target.dataset.action === "shop-category") {
         state.shopCategory = target.value;
@@ -1589,9 +2152,25 @@
       if (target.id === "invoice_phone") { state.draftInvoice.phone = target.value; needsRender = true; }
       if (target.id === "invoice_address") { state.draftInvoice.address = target.value; needsRender = true; }
       if (target.id === "invoice_ruc") { state.draftInvoice.ruc = target.value; needsRender = true; }
+      if (target.id === "invoice_jir") { state.draftInvoice.jir = target.value; needsRender = true; }
+      if (target.id === "invoice_zki") { state.draftInvoice.zki = target.value; needsRender = true; }
+      if (target.id === "invoice_office") { state.draftInvoice.office = target.value; needsRender = true; }
+      if (target.id === "invoice_device") { state.draftInvoice.device = target.value; needsRender = true; }
+      if (target.id === "invoice_operator") { state.draftInvoice.operator = target.value; needsRender = true; }
+      if (target.id === "invoice_operator_oib") { state.draftInvoice.operatorOib = target.value; needsRender = true; }
+      if (target.id === "invoice_payment") { state.draftInvoice.paymentMethod = target.value; needsRender = true; }
+      if (target.id === "invoice_issue_time") { state.draftInvoice.issueTime = target.value; needsRender = true; }
       if (target.id === "invoice_notes") { state.draftInvoice.notes = target.value; needsRender = true; }
       if (target.id === "invoice_paid") { state.draftInvoice.paid = target.value === "true"; needsRender = true; }
       if (needsRender) render();
+    });
+
+    document.addEventListener("input", (event) => {
+      const target = event.target;
+      if (target.dataset.action === "shop-search") {
+        state.shopQuery = target.value;
+        render();
+      }
     });
 
     function addOfferItem() {
@@ -1686,6 +2265,12 @@
       renderDocument(offer, "offer");
     }
 
+    function exportOfferPDF(id) {
+      const offer = state.data.offers.find(o => o.id === id);
+      if (!offer) return;
+      exportDocumentPDF(offer, "offer");
+    }
+
     function convertOffer(id) {
       const offer = state.data.offers.find(o => o.id === id);
       if (!offer) return;
@@ -1756,6 +2341,12 @@
       renderDocument(invoice, "invoice");
     }
 
+    function exportInvoicePDF(id) {
+      const invoice = state.data.invoices.find(i => i.id === id);
+      if (!invoice) return;
+      exportDocumentPDF(invoice, "invoice");
+    }
+
     function togglePaid(id) {
       const invoice = state.data.invoices.find(i => i.id === id);
       if (!invoice) return;
@@ -1798,12 +2389,74 @@
     }
 
     function tierToOffer(tier) {
-      const tpl = templates.find(t => t.id === state.selectedTemplate);
-      const items = tpl.tiers[tier].map(item => ({ ...item, id: null }));
+      const project = getSelectedProject();
+      if (!project) return;
+      const items = (project.tiers?.[tier] || []).map(item => ({ ...item, id: item.id || null }));
       state.draftOffer = {
         ...createOfferDraft(),
         items,
-        notes: `Ponuda prema paketu: ${tpl.name} (${tier})`
+        notes: `Ponuda prema projektu: ${project.name} (${tier})`
+      };
+      setView("offers");
+    }
+
+    function bundleAddItem() {
+      const input = $("#bundle_item_input");
+      const value = input.value.trim();
+      if (!value) return toast("Upisite stavku.");
+      state.draftBundle.items.push(value);
+      input.value = "";
+      render();
+    }
+
+    function bundleRemoveItem(index) {
+      state.draftBundle.items.splice(Number(index), 1);
+      render();
+    }
+
+    function saveBundle() {
+      if (!state.draftBundle.name) return toast("Upisite naziv paketa.");
+      const existing = state.data.bundles.find(b => b.id === state.draftBundle.id);
+      if (existing) {
+        Object.assign(existing, clone(state.draftBundle));
+      } else {
+        state.data.bundles.push(clone(state.draftBundle));
+      }
+      saveData();
+      state.draftBundle = createBundleDraft();
+      render();
+      toast("Paket spremljen.");
+    }
+
+    function resetBundle() {
+      state.draftBundle = createBundleDraft();
+      render();
+    }
+
+    function editBundle(id) {
+      const bundle = state.data.bundles.find(b => b.id === id);
+      if (!bundle) return;
+      state.draftBundle = createBundleDraft(bundle);
+      render();
+    }
+
+    function deleteBundle(id) {
+      if (!confirm("Obrisati paket?")) return;
+      state.data.bundles = state.data.bundles.filter(b => b.id !== id);
+      saveData();
+      render();
+    }
+
+    function bundleToOffer(id) {
+      const bundle = state.data.bundles.find(b => b.id === id);
+      if (!bundle) return;
+      const parts = [];
+      if (bundle.description) parts.push(bundle.description);
+      if (bundle.items.length) parts.push(`Ukljucuje: ${bundle.items.join(", ")}`);
+      state.draftOffer = {
+        ...createOfferDraft(),
+        items: [{ id: null, name: bundle.name, qty: 1, unit: "paket", price: bundle.price }],
+        notes: parts.join("\n")
       };
       setView("offers");
     }
@@ -1872,7 +2525,7 @@
       reader.onload = () => {
         try {
           const parsed = JSON.parse(reader.result);
-          state.data = { ...clone(seedData), ...parsed };
+          state.data = normalizeData(parsed);
           saveData();
           render();
           toast("Podaci uvezeni.");
@@ -1885,7 +2538,7 @@
 
     function resetData() {
       if (!confirm("Sigurno zelite obrisati sve podatke?")) return;
-      state.data = clone(seedData);
+      state.data = normalizeData({});
       saveData();
       render();
       toast("Podaci resetirani.");
