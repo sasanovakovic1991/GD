@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VodoPro Studio | Ponude, Racuni, Lager</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
@@ -88,6 +89,15 @@
       display: grid;
       place-items: center;
       letter-spacing: 0.5px;
+      overflow: hidden;
+    }
+    .logo.has-image {
+      background: transparent;
+    }
+    .logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
     .brand-title { font-weight: 700; font-size: 20px; }
     .brand-sub { color: var(--muted); font-size: 14px; }
@@ -361,9 +371,9 @@
   <div class="app">
     <header>
       <div class="brand">
-        <div class="logo">VP</div>
+        <div class="logo" id="companyLogo">VP</div>
         <div>
-          <div class="brand-title">VodoPro Studio</div>
+          <div class="brand-title" id="companyName">VodoPro Studio</div>
           <div class="brand-sub">Ponude, racuni, lager, webshop i analiza</div>
         </div>
       </div>
@@ -383,6 +393,8 @@
       <button class="tab active" data-action="switch-view" data-view="dashboard">Pocetna</button>
       <button class="tab" data-action="switch-view" data-view="offers">Ponude</button>
       <button class="tab" data-action="switch-view" data-view="invoices">Racuni</button>
+      <button class="tab" data-action="switch-view" data-view="customers">Kupci</button>
+      <button class="tab" data-action="switch-view" data-view="jobs">Projekti</button>
       <button class="tab" data-action="switch-view" data-view="inventory">Lager</button>
       <button class="tab" data-action="switch-view" data-view="analysis">Analiza</button>
       <button class="tab" data-action="switch-view" data-view="compare">Usporedba</button>
@@ -394,6 +406,8 @@
       <section id="view-dashboard" class="view active"></section>
       <section id="view-offers" class="view"></section>
       <section id="view-invoices" class="view"></section>
+      <section id="view-customers" class="view"></section>
+      <section id="view-jobs" class="view"></section>
       <section id="view-inventory" class="view"></section>
       <section id="view-analysis" class="view"></section>
       <section id="view-compare" class="view"></section>
@@ -490,7 +504,8 @@
           oib: "12345678901",
           iban: "HR1210010051863000160",
           phone: "+385 91 000 0000",
-          email: "info@vodopro.hr"
+          email: "info@vodopro.hr",
+          logo: ""
         },
         vatRate: 25,
         paymentDays: 8,
@@ -525,6 +540,9 @@
       offers: [],
       invoices: [],
       orders: [],
+      customers: [],
+      customerEvents: [],
+      jobs: [],
       projects: defaultProjects,
       bundles: defaultBundles
     };
@@ -541,6 +559,8 @@
       shopQuery: "",
       shopCategory: "all",
       selectedProjectId: initialData.projects?.[0]?.id || "",
+      selectedCustomerId: initialData.customers?.[0]?.id || "",
+      selectedJobId: initialData.jobs?.[0]?.id || "",
       editTiers: false
     };
 
@@ -564,8 +584,44 @@
       normalized.offers = Array.isArray(data?.offers) ? data.offers : [];
       normalized.invoices = Array.isArray(data?.invoices) ? data.invoices : [];
       normalized.orders = Array.isArray(data?.orders) ? data.orders : [];
+      normalized.customers = Array.isArray(data?.customers) ? data.customers : [];
+      normalized.customerEvents = Array.isArray(data?.customerEvents) ? data.customerEvents : [];
+      normalized.jobs = Array.isArray(data?.jobs) ? data.jobs : [];
       normalized.projects = Array.isArray(data?.projects) ? data.projects : base.projects;
       normalized.bundles = Array.isArray(data?.bundles) ? data.bundles : base.bundles;
+
+      normalized.inventory = normalized.inventory.map((item) => {
+        const cost = Number(item.cost || 0);
+        const price = Number(item.price || 0);
+        const marginPct = Number(item.marginPct);
+        const computedMargin = cost > 0 ? ((price - cost) / cost) * 100 : 0;
+        return {
+          ...item,
+          cost,
+          price,
+          marginPct: Number.isFinite(marginPct) ? marginPct : Math.max(0, Math.round(computedMargin * 10) / 10)
+        };
+      });
+      normalized.customers = normalized.customers.map((customer) => ({
+        id: customer.id || uid(),
+        name: customer.name || "Kupac",
+        oib: customer.oib || "",
+        address: customer.address || "",
+        phone: customer.phone || "",
+        email: customer.email || "",
+        notes: customer.notes || "",
+        createdAt: customer.createdAt || new Date().toISOString()
+      }));
+      normalized.jobs = normalized.jobs.map((job) => ({
+        id: job.id || uid(),
+        name: job.name || "Projekt",
+        customerId: job.customerId || "",
+        address: job.address || "",
+        status: job.status || "Planiranje",
+        notes: job.notes || "",
+        images: Array.isArray(job.images) ? job.images : [],
+        createdAt: job.createdAt || new Date().toISOString()
+      }));
       return normalized;
     }
 
@@ -601,6 +657,8 @@
         id: uid(),
         number: nextOfferNumber(false, data),
         date: todayISO(),
+        customerId: "",
+        projectId: "",
         customer: "",
         phone: "",
         address: "",
@@ -620,6 +678,8 @@
         date: todayISO(),
         dueDate: addDays(todayISO(), settings.paymentDays ?? 8),
         paid: false,
+        customerId: "",
+        projectId: "",
         customer: "",
         phone: "",
         address: "",
@@ -714,6 +774,27 @@
       return { subtotal, rebateValue, discountValue, base, vat, total };
     }
 
+    function updateInventoryItem(item, field, rawValue) {
+      if (field === "webshop") {
+        item.webshop = rawValue === "true";
+        return;
+      }
+      if (field === "stock") item.stock = Number(rawValue) || 0;
+      if (field === "cost") item.cost = Number(rawValue) || 0;
+      if (field === "price") item.price = Number(rawValue) || 0;
+      if (field === "marginPct") {
+        item.marginPct = Number(rawValue) || 0;
+        const cost = Number(item.cost || 0);
+        item.price = cost > 0 ? cost * (1 + item.marginPct / 100) : item.price;
+        return;
+      }
+      if (field === "cost" || field === "price") {
+        const cost = Number(item.cost || 0);
+        const price = Number(item.price || 0);
+        item.marginPct = cost > 0 ? Math.round(((price - cost) / cost) * 1000) / 10 : 0;
+      }
+    }
+
     function toast(message) {
       const el = $("#toast");
       el.textContent = message;
@@ -735,6 +816,67 @@
       if (label) label.textContent = state.data.settings.theme === "dark" ? "Tamna" : "Svijetla";
     }
 
+    function updateBranding() {
+      const company = state.data.settings.company;
+      const nameEl = $("#companyName");
+      if (nameEl) nameEl.textContent = company.name || "VodoPro Studio";
+      const logoEl = $("#companyLogo");
+      if (!logoEl) return;
+      logoEl.innerHTML = "";
+      if (company.logo) {
+        const img = document.createElement("img");
+        img.src = company.logo;
+        img.alt = company.name || "Logo";
+        logoEl.appendChild(img);
+        logoEl.classList.add("has-image");
+      } else {
+        logoEl.classList.remove("has-image");
+        logoEl.textContent = (company.name || "VP").slice(0, 2).toUpperCase();
+      }
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString("hr-HR");
+    }
+
+    function getSelectedCustomer() {
+      const customers = state.data.customers || [];
+      if (!customers.length) return null;
+      let customer = customers.find(c => c.id === state.selectedCustomerId);
+      if (!customer) {
+        customer = customers[0];
+        state.selectedCustomerId = customer.id;
+      }
+      return customer;
+    }
+
+    function getSelectedJob() {
+      const jobs = state.data.jobs || [];
+      if (!jobs.length) return null;
+      let job = jobs.find(j => j.id === state.selectedJobId);
+      if (!job) {
+        job = jobs[0];
+        state.selectedJobId = job.id;
+      }
+      return job;
+    }
+
+    function addCustomerEvent(customerId, type, note, refType, refId) {
+      if (!customerId) return;
+      state.data.customerEvents.push({
+        id: uid(),
+        customerId,
+        type,
+        note,
+        refType,
+        refId,
+        date: new Date().toISOString()
+      });
+    }
+
     function setView(view) {
       state.view = view;
       $$(".tab").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
@@ -748,11 +890,15 @@
       $("#view-dashboard").innerHTML = renderDashboard();
       $("#view-offers").innerHTML = renderOffers();
       $("#view-invoices").innerHTML = renderInvoices();
+      $("#view-customers").innerHTML = renderCustomers();
+      $("#view-jobs").innerHTML = renderJobs();
       $("#view-inventory").innerHTML = renderInventory();
       $("#view-analysis").innerHTML = renderAnalysis();
       $("#view-compare").innerHTML = renderComparison();
       $("#view-packages").innerHTML = renderPackages();
       $("#view-shop").innerHTML = renderShop();
+      drawInvoiceChart();
+      updateBranding();
     }
 
     function renderDashboard() {
@@ -825,6 +971,8 @@
 
     function renderOffers() {
       const inventoryOptions = state.data.inventory.map(item => `<option value="${item.id}">${item.name} (${fmtEur(item.price)}/${item.unit})</option>`).join("");
+      const customerOptions = state.data.customers.map(c => `<option value="${c.id}" ${state.draftOffer.customerId === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+      const jobOptions = state.data.jobs.map(j => `<option value="${j.id}" ${state.draftOffer.projectId === j.id ? "selected" : ""}>${j.name}</option>`).join("");
       const totals = calcTotals(state.draftOffer.items, state.draftOffer.discount, state.draftOffer.vatRate, state.draftOffer.rebatePct);
       return `
         <div class="grid two">
@@ -838,6 +986,20 @@
               <div>
                 <label>Datum</label>
                 <input id="offer_date" type="date" value="${state.draftOffer.date}" />
+              </div>
+              <div>
+                <label>Kupac (baza)</label>
+                <select id="offer_customer_select">
+                  <option value="">Odaberi kupca</option>
+                  ${customerOptions}
+                </select>
+              </div>
+              <div>
+                <label>Projekt</label>
+                <select id="offer_project_select">
+                  <option value="">Odaberi projekt</option>
+                  ${jobOptions}
+                </select>
               </div>
               <div>
                 <label>Klijent</label>
@@ -953,9 +1115,39 @@
 
     function renderInvoices() {
       const offerOptions = state.data.offers.map(offer => `<option value="${offer.id}">${offer.number} - ${offer.customer || "Klijent"}</option>`).join("");
+      const customerOptions = state.data.customers.map(c => `<option value="${c.id}" ${state.draftInvoice.customerId === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+      const jobOptions = state.data.jobs.map(j => `<option value="${j.id}" ${state.draftInvoice.projectId === j.id ? "selected" : ""}>${j.name}</option>`).join("");
       const totals = calcTotals(state.draftInvoice.items, state.draftInvoice.discount, state.draftInvoice.vatRate, state.draftInvoice.rebatePct);
+      const invoiceTotals = state.data.invoices.map(inv => calcTotals(inv.items, inv.discount, inv.vatRate, inv.rebatePct || 0).total);
+      const totalInvoiced = invoiceTotals.reduce((sum, val) => sum + val, 0);
+      const totalPaid = state.data.invoices.reduce((sum, inv, idx) => sum + (inv.paid ? invoiceTotals[idx] : 0), 0);
+      const totalOutstanding = Math.max(0, totalInvoiced - totalPaid);
       return `
         <div class="grid two">
+          <div class="card" style="grid-column:1/-1;">
+            <div class="row space align">
+              <h2>Dashboard racuna</h2>
+              <span class="pill">Ukupno racuna: ${state.data.invoices.length}</span>
+            </div>
+            <div class="grid three" style="margin-top:12px;">
+              <div class="stat">
+                <div class="muted">Ukupni promet</div>
+                <div class="value">${fmtEur(totalInvoiced)}</div>
+              </div>
+              <div class="stat">
+                <div class="muted">Naplaceno</div>
+                <div class="value">${fmtEur(totalPaid)}</div>
+              </div>
+              <div class="stat">
+                <div class="muted">Otvoreno</div>
+                <div class="value">${fmtEur(totalOutstanding)}</div>
+              </div>
+            </div>
+            <div style="margin-top:16px;">
+              <canvas id="invoiceChart" height="140"></canvas>
+              <div class="muted" style="margin-top:8px;">Graf prikazuje promet i naplatu po mjesecima.</div>
+            </div>
+          </div>
           <div class="card">
             <h2>Novi racun</h2>
             <label>Ucitaj iz ponude</label>
@@ -971,6 +1163,20 @@
               <div>
                 <label>Datum</label>
                 <input id="invoice_date" type="date" value="${state.draftInvoice.date}" />
+              </div>
+              <div>
+                <label>Kupac (baza)</label>
+                <select id="invoice_customer_select">
+                  <option value="">Odaberi kupca</option>
+                  ${customerOptions}
+                </select>
+              </div>
+              <div>
+                <label>Projekt</label>
+                <select id="invoice_project_select">
+                  <option value="">Odaberi projekt</option>
+                  ${jobOptions}
+                </select>
               </div>
               <div>
                 <label>Rok placanja</label>
@@ -1140,6 +1346,359 @@
       `;
     }
 
+    function renderCustomers() {
+      const customers = state.data.customers || [];
+      const selected = getSelectedCustomer();
+      const events = selected
+        ? state.data.customerEvents.filter(e => e.customerId === selected.id).sort((a, b) => b.date.localeCompare(a.date))
+        : [];
+      const jobs = selected ? state.data.jobs.filter(job => job.customerId === selected.id) : [];
+      const offers = selected ? state.data.offers.filter(o => o.customerId === selected.id) : [];
+      const invoices = selected ? state.data.invoices.filter(i => i.customerId === selected.id) : [];
+      return `
+        <div class="grid two">
+          <div class="card">
+            <h2>Novi kupac</h2>
+            <label>Naziv / Ime</label>
+            <input id="new_customer_name" placeholder="Ime ili tvrtka" />
+            <label style="margin-top:8px;">OIB</label>
+            <input id="new_customer_oib" placeholder="OIB" />
+            <label style="margin-top:8px;">Adresa</label>
+            <input id="new_customer_address" placeholder="Adresa" />
+            <label style="margin-top:8px;">Telefon</label>
+            <input id="new_customer_phone" placeholder="+385..." />
+            <label style="margin-top:8px;">Email</label>
+            <input id="new_customer_email" placeholder="email@domena.hr" />
+            <label style="margin-top:8px;">Napomena</label>
+            <textarea id="new_customer_notes" placeholder="Dodatne informacije"></textarea>
+            <button class="btn primary" style="margin-top:12px;" data-action="add-customer">Dodaj kupca</button>
+
+            <div class="divider"></div>
+            <h3>Popis kupaca</h3>
+            ${customers.length === 0 ? `<p class="muted">Nema kupaca.</p>` : `
+              <div class="list">
+                ${customers.map(c => `
+                  <div class="list-item">
+                    <div class="row space align">
+                      <strong>${c.name}</strong>
+                      <span class="pill">${c.phone || "-"}</span>
+                    </div>
+                    <div class="muted">${c.email || ""}</div>
+                    <div class="row">
+                      <button class="btn small" data-action="select-customer" data-id="${c.id}">Odaberi</button>
+                      <button class="btn small danger" data-action="delete-customer" data-id="${c.id}">Obrisi</button>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+          </div>
+
+          <div class="card">
+            <h2>CRM pregled</h2>
+            ${!selected ? `<p class="muted">Odaberite kupca iz liste.</p>` : `
+              <div class="row space align">
+                <strong>${selected.name}</strong>
+                <span class="pill">${selected.oib || "bez OIB-a"}</span>
+              </div>
+              <div class="grid two" style="margin-top:12px;">
+                <div>
+                  <label>Naziv / Ime</label>
+                  <input id="customer_name" value="${selected.name}" />
+                </div>
+                <div>
+                  <label>OIB</label>
+                  <input id="customer_oib" value="${selected.oib || ""}" />
+                </div>
+                <div>
+                  <label>Adresa</label>
+                  <input id="customer_address" value="${selected.address || ""}" />
+                </div>
+                <div>
+                  <label>Telefon</label>
+                  <input id="customer_phone" value="${selected.phone || ""}" />
+                </div>
+                <div>
+                  <label>Email</label>
+                  <input id="customer_email" value="${selected.email || ""}" />
+                </div>
+                <div>
+                  <label>Napomena</label>
+                  <textarea id="customer_notes">${selected.notes || ""}</textarea>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+              <h3>Događaji</h3>
+              <div class="row align">
+                <select id="event_type">
+                  ${["Poziv","Ponuda","Racun","Sastanak","Poruka","Servis"].map(t => `<option value="${t}">${t}</option>`).join("")}
+                </select>
+                <input id="event_note" placeholder="Napomena događaja" />
+                <button class="btn" data-action="add-customer-event">Dodaj</button>
+              </div>
+              ${events.length === 0 ? `<p class="muted" style="margin-top:8px;">Nema događaja.</p>` : `
+                <div class="list" style="margin-top:12px;">
+                  ${events.map(ev => `
+                    <div class="list-item">
+                      <div class="row space align">
+                        <strong>${ev.type}</strong>
+                        <span class="pill">${formatDateTime(ev.date)}</span>
+                      </div>
+                      <div class="muted">${ev.note || "-"}</div>
+                      ${ev.refType ? `<div class="muted">${ev.refType}: ${ev.refId || "-"}</div>` : ""}
+                    </div>
+                  `).join("")}
+                </div>
+              `}
+
+              <div class="divider"></div>
+              <h3>Povezani projekti i dokumenti</h3>
+              <div class="row">
+                ${jobs.map(job => `<span class="pill">Projekt: ${job.name}</span>`).join("") || `<span class="muted">Nema projekata.</span>`}
+              </div>
+              <div class="row" style="margin-top:8px;">
+                ${offers.map(o => `<span class="pill">Ponuda ${o.number}</span>`).join("") || `<span class="muted">Nema ponuda.</span>`}
+              </div>
+              <div class="row" style="margin-top:8px;">
+                ${invoices.map(i => `<span class="pill">Racun ${i.number}</span>`).join("") || `<span class="muted">Nema racuna.</span>`}
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderJobs() {
+      const jobs = state.data.jobs || [];
+      const customers = state.data.customers || [];
+      const selected = getSelectedJob();
+      const customerOptions = customers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+      const customerOptionsSelected = customers.map(c => `<option value="${c.id}" ${selected?.customerId === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+      const relatedOffers = selected ? state.data.offers.filter(o => o.projectId === selected.id) : [];
+      const relatedInvoices = selected ? state.data.invoices.filter(i => i.projectId === selected.id) : [];
+      return `
+        <div class="grid two">
+          <div class="card">
+            <h2>Novi projekt</h2>
+            <label>Naziv projekta</label>
+            <input id="new_job_name" placeholder="Npr. Grijanje - Kuca Novak" />
+            <label style="margin-top:8px;">Kupac</label>
+            <select id="new_job_customer">
+              <option value="">Odaberi kupca</option>
+              ${customerOptions}
+            </select>
+            <label style="margin-top:8px;">Adresa</label>
+            <input id="new_job_address" placeholder="Adresa objekta" />
+            <label style="margin-top:8px;">Status</label>
+            <select id="new_job_status">
+              ${["Planiranje","U tijeku","Zavrseno","Servis"].map(s => `<option value="${s}">${s}</option>`).join("")}
+            </select>
+            <label style="margin-top:8px;">Napomena</label>
+            <textarea id="new_job_notes" placeholder="Opis radova..."></textarea>
+            <button class="btn primary" style="margin-top:12px;" data-action="add-job">Dodaj projekt</button>
+
+            <div class="divider"></div>
+            <h3>Popis projekata</h3>
+            ${jobs.length === 0 ? `<p class="muted">Nema projekata.</p>` : `
+              <div class="list">
+                ${jobs.map(job => `
+                  <div class="list-item">
+                    <div class="row space align">
+                      <strong>${job.name}</strong>
+                      <span class="pill">${job.status || "-"}</span>
+                    </div>
+                    <div class="muted">${customers.find(c => c.id === job.customerId)?.name || "Bez kupca"}</div>
+                    <div class="row">
+                      <button class="btn small" data-action="select-job" data-id="${job.id}">Odaberi</button>
+                      <button class="btn small danger" data-action="delete-job" data-id="${job.id}">Obrisi</button>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+          </div>
+
+          <div class="card">
+            <h2>Detalji projekta</h2>
+            ${!selected ? `<p class="muted">Odaberite projekt.</p>` : `
+              <label>Naziv</label>
+              <input id="job_name" value="${selected.name}" />
+              <label style="margin-top:8px;">Kupac</label>
+              <select id="job_customer">
+                <option value="">Bez kupca</option>
+                ${customerOptionsSelected}
+              </select>
+              <label style="margin-top:8px;">Adresa</label>
+              <input id="job_address" value="${selected.address || ""}" />
+              <label style="margin-top:8px;">Status</label>
+              <select id="job_status">
+                ${["Planiranje","U tijeku","Zavrseno","Servis"].map(s => `<option value="${s}" ${selected.status === s ? "selected" : ""}>${s}</option>`).join("")}
+              </select>
+              <label style="margin-top:8px;">Napomena</label>
+              <textarea id="job_notes">${selected.notes || ""}</textarea>
+
+              <div class="divider"></div>
+              <h3>Slike radova u tijeku</h3>
+              <input id="job_image" type="file" accept="image/*" />
+              ${selected.images?.length ? `
+                <div class="grid two" style="margin-top:12px;">
+                  ${selected.images.map((img, idx) => `
+                    <div>
+                      <img src="${img}" alt="Radovi" style="width:100%;height:160px;object-fit:cover;border-radius:12px;" />
+                      <button class="btn small danger" style="margin-top:6px;" data-action="remove-job-image" data-index="${idx}">Ukloni</button>
+                    </div>
+                  `).join("")}
+                </div>
+              ` : `<p class="muted" style="margin-top:8px;">Nema fotografija.</p>`}
+
+              <div class="divider"></div>
+              <h3>Povezani dokumenti</h3>
+              <div class="row">
+                ${relatedOffers.map(o => `<span class="pill">Ponuda ${o.number}</span>`).join("") || `<span class="muted">Nema ponuda.</span>`}
+              </div>
+              <div class="row" style="margin-top:8px;">
+                ${relatedInvoices.map(i => `<span class="pill">Racun ${i.number}</span>`).join("") || `<span class="muted">Nema racuna.</span>`}
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    function addCustomer() {
+      const name = $("#new_customer_name").value.trim();
+      if (!name) return toast("Upisite naziv kupca.");
+      const customer = {
+        id: uid(),
+        name,
+        oib: $("#new_customer_oib").value.trim(),
+        address: $("#new_customer_address").value.trim(),
+        phone: $("#new_customer_phone").value.trim(),
+        email: $("#new_customer_email").value.trim(),
+        notes: $("#new_customer_notes").value.trim(),
+        createdAt: new Date().toISOString()
+      };
+      state.data.customers.push(customer);
+      state.selectedCustomerId = customer.id;
+      saveData();
+      render();
+    }
+
+    function selectCustomer(id) {
+      state.selectedCustomerId = id;
+      render();
+    }
+
+    function deleteCustomer(id) {
+      if (!confirm("Obrisati kupca?")) return;
+      state.data.customers = state.data.customers.filter(c => c.id !== id);
+      state.data.customerEvents = state.data.customerEvents.filter(e => e.customerId !== id);
+      if (state.selectedCustomerId === id) {
+        state.selectedCustomerId = state.data.customers[0]?.id || "";
+      }
+      saveData();
+      render();
+    }
+
+    function addCustomerEventManual() {
+      const customer = getSelectedCustomer();
+      if (!customer) return;
+      const type = $("#event_type").value;
+      const note = $("#event_note").value.trim();
+      addCustomerEvent(customer.id, type, note);
+      saveData();
+      $("#event_note").value = "";
+      render();
+    }
+
+    function addJob() {
+      const name = $("#new_job_name").value.trim();
+      if (!name) return toast("Upisite naziv projekta.");
+      const job = {
+        id: uid(),
+        name,
+        customerId: $("#new_job_customer").value,
+        address: $("#new_job_address").value.trim(),
+        status: $("#new_job_status").value,
+        notes: $("#new_job_notes").value.trim(),
+        images: [],
+        createdAt: new Date().toISOString()
+      };
+      state.data.jobs.push(job);
+      state.selectedJobId = job.id;
+      saveData();
+      render();
+    }
+
+    function selectJob(id) {
+      state.selectedJobId = id;
+      render();
+    }
+
+    function deleteJob(id) {
+      if (!confirm("Obrisati projekt?")) return;
+      state.data.jobs = state.data.jobs.filter(j => j.id !== id);
+      if (state.selectedJobId === id) {
+        state.selectedJobId = state.data.jobs[0]?.id || "";
+      }
+      saveData();
+      render();
+    }
+
+    function removeJobImage(index) {
+      const job = getSelectedJob();
+      if (!job) return;
+      job.images.splice(Number(index), 1);
+      saveData();
+      render();
+    }
+
+    function clearLogo() {
+      state.data.settings.company.logo = "";
+      saveData();
+      render();
+    }
+
+    function buildInvoiceMonthlySeries() {
+      const map = {};
+      state.data.invoices.forEach(inv => {
+        const key = (inv.date || "").slice(0, 7) || "Nepoznato";
+        const total = calcTotals(inv.items, inv.discount, inv.vatRate, inv.rebatePct || 0).total;
+        if (!map[key]) map[key] = { invoiced: 0, paid: 0 };
+        map[key].invoiced += total;
+        if (inv.paid) map[key].paid += total;
+      });
+      const keys = Object.keys(map).sort();
+      return {
+        labels: keys,
+        invoiced: keys.map(k => map[k].invoiced),
+        paid: keys.map(k => map[k].paid)
+      };
+    }
+
+    function drawInvoiceChart() {
+      const canvas = $("#invoiceChart");
+      if (!canvas || !window.Chart) return;
+      const { labels, invoiced, paid } = buildInvoiceMonthlySeries();
+      if (window.invoiceChart) window.invoiceChart.destroy();
+      window.invoiceChart = new Chart(canvas.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            { label: "Promet", data: invoiced, backgroundColor: "rgba(37, 99, 235, 0.7)" },
+            { label: "Naplaceno", data: paid, backgroundColor: "rgba(34, 197, 94, 0.7)" }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: "bottom" } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
     function renderDraftItems(items, type) {
       if (!items.length) return `<p class="muted">Nema stavki.</p>`;
       return `
@@ -1246,6 +1805,9 @@
           <div class="list">
             ${state.data.inventory.map(item => {
               const low = item.stock <= state.data.settings.lowStock;
+              const marginUnit = (item.price || 0) - (item.cost || 0);
+              const marginTotal = marginUnit * (item.stock || 0);
+              const totalValue = (item.stock || 0) * (item.price || 0);
               return `
                 <div class="list-item">
                   <div class="row space align">
@@ -1268,6 +1830,10 @@
                       <label>Prodajna</label>
                       <input type="number" min="0" step="0.01" value="${item.price}" data-inv-id="${item.id}" data-inv-field="price" />
                     </div>
+                    <div style="flex:1;min-width:120px;">
+                      <label>Marza (%)</label>
+                      <input type="number" min="0" step="0.1" value="${item.marginPct || 0}" data-inv-id="${item.id}" data-inv-field="marginPct" />
+                    </div>
                     <div style="flex:1;min-width:140px;">
                       <label>Webshop</label>
                       <select data-inv-id="${item.id}" data-inv-field="webshop">
@@ -1275,6 +1841,10 @@
                         <option value="false" ${item.webshop ? "" : "selected"}>Ne</option>
                       </select>
                     </div>
+                  </div>
+                  <div class="row" style="margin-top:8px;">
+                    <span class="pill">Vrijednost: ${fmtEur(totalValue)}</span>
+                    <span class="pill">Marza: ${fmtEur(marginTotal)} (${(item.marginPct || 0).toFixed(1)}%)</span>
                   </div>
                   <div class="row">
                     <button class="btn small danger" data-action="delete-inventory" data-id="${item.id}">Obrisi</button>
@@ -1765,6 +2335,16 @@
             <label>Email</label>
             <input data-setting="company.email" value="${settings.company.email}" />
           </div>
+          <div style="grid-column:1/-1;">
+            <label>Logo tvrtke</label>
+            <input id="logo_upload" type="file" accept="image/*" />
+            ${settings.company.logo ? `
+              <div style="margin-top:10px;display:flex;gap:12px;align-items:center;">
+                <img src="${settings.company.logo}" alt="Logo" style="width:80px;height:80px;object-fit:cover;border-radius:12px;border:1px solid var(--line);" />
+                <button class="btn small danger" data-action="clear-logo">Ukloni logo</button>
+              </div>
+            ` : `<div class="muted" style="margin-top:6px;">Logo nije postavljen.</div>`}
+          </div>
           <div>
             <label>PDV (%)</label>
             <input type="number" data-setting="vatRate" value="${settings.vatRate}" />
@@ -1825,8 +2405,10 @@
       const company = state.data.settings.company;
       const title = type === "offer" ? "Ponuda" : "Racun";
       const issueTime = doc.issueTime ? doc.issueTime.replace("T", " ") : "";
+      const projectName = doc.projectId ? state.data.jobs.find(j => j.id === doc.projectId)?.name : "";
       return `
         <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 800px;">
+          ${company.logo ? `<img src="${company.logo}" alt="Logo" style="width:90px;height:90px;object-fit:cover;border-radius:14px;margin-bottom:10px;" />` : ""}
           <h2>${company.name}</h2>
           <div>${company.address}</div>
           <div>OIB: ${company.oib}</div>
@@ -1851,6 +2433,7 @@
           ${type === "invoice" ? `<div>Rok placanja: ${doc.dueDate}</div>` : ""}
           <div>Klijent: ${doc.customer}</div>
           <div>Adresa: ${doc.address}</div>
+          ${projectName ? `<div>Projekt: ${projectName}</div>` : ""}
           <table style="width:100%;border-collapse:collapse;margin-top:12px;">
             <thead>
               <tr>
@@ -1988,6 +2571,15 @@
       if (name === "delete-invoice") return deleteInvoice(action.dataset.id);
       if (name === "add-inventory") return addInventory();
       if (name === "delete-inventory") return deleteInventory(action.dataset.id);
+      if (name === "add-customer") return addCustomer();
+      if (name === "select-customer") return selectCustomer(action.dataset.id);
+      if (name === "delete-customer") return deleteCustomer(action.dataset.id);
+      if (name === "add-customer-event") return addCustomerEventManual();
+      if (name === "add-job") return addJob();
+      if (name === "select-job") return selectJob(action.dataset.id);
+      if (name === "delete-job") return deleteJob(action.dataset.id);
+      if (name === "remove-job-image") return removeJobImage(action.dataset.index);
+      if (name === "clear-logo") return clearLogo();
       if (name === "add-project") return addProject();
       if (name === "delete-project") return deleteProject(action.dataset.id);
       if (name === "duplicate-project") return duplicateProject(action.dataset.id);
@@ -2013,6 +2605,115 @@
       const target = event.target;
       if (target.id === "theme_toggle") {
         state.data.settings.theme = target.checked ? "dark" : "light";
+        saveData();
+        return render();
+      }
+      if (target.id === "logo_upload" && target.files && target.files[0]) {
+        const file = target.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+          state.data.settings.company.logo = reader.result;
+          saveData();
+          render();
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+      if (target.id === "offer_customer_select") {
+        const customer = state.data.customers.find(c => c.id === target.value);
+        if (customer) {
+          state.draftOffer.customerId = customer.id;
+          state.draftOffer.customer = customer.name;
+          state.draftOffer.phone = customer.phone || "";
+          state.draftOffer.address = customer.address || "";
+        } else {
+          state.draftOffer.customerId = "";
+        }
+        return render();
+      }
+      if (target.id === "invoice_customer_select") {
+        const customer = state.data.customers.find(c => c.id === target.value);
+        if (customer) {
+          state.draftInvoice.customerId = customer.id;
+          state.draftInvoice.customer = customer.name;
+          state.draftInvoice.phone = customer.phone || "";
+          state.draftInvoice.address = customer.address || "";
+        } else {
+          state.draftInvoice.customerId = "";
+        }
+        return render();
+      }
+      if (target.id === "offer_project_select") {
+        const job = state.data.jobs.find(j => j.id === target.value);
+        if (job) {
+          state.draftOffer.projectId = job.id;
+          state.draftOffer.address = job.address || state.draftOffer.address;
+          if (job.customerId) {
+            const customer = state.data.customers.find(c => c.id === job.customerId);
+            if (customer) {
+              state.draftOffer.customerId = customer.id;
+              state.draftOffer.customer = customer.name;
+              state.draftOffer.phone = customer.phone || "";
+              state.draftOffer.address = customer.address || state.draftOffer.address;
+            }
+          }
+        } else {
+          state.draftOffer.projectId = "";
+        }
+        return render();
+      }
+      if (target.id === "invoice_project_select") {
+        const job = state.data.jobs.find(j => j.id === target.value);
+        if (job) {
+          state.draftInvoice.projectId = job.id;
+          state.draftInvoice.address = job.address || state.draftInvoice.address;
+          if (job.customerId) {
+            const customer = state.data.customers.find(c => c.id === job.customerId);
+            if (customer) {
+              state.draftInvoice.customerId = customer.id;
+              state.draftInvoice.customer = customer.name;
+              state.draftInvoice.phone = customer.phone || "";
+              state.draftInvoice.address = customer.address || state.draftInvoice.address;
+            }
+          }
+        } else {
+          state.draftInvoice.projectId = "";
+        }
+        return render();
+      }
+      if (target.id === "job_image" && target.files && target.files[0]) {
+        const job = getSelectedJob();
+        if (!job) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          job.images = job.images || [];
+          job.images.push(reader.result);
+          saveData();
+          render();
+        };
+        reader.readAsDataURL(target.files[0]);
+        return;
+      }
+      if (target.id === "job_name" || target.id === "job_customer" || target.id === "job_address" || target.id === "job_status" || target.id === "job_notes") {
+        const job = getSelectedJob();
+        if (!job) return;
+        if (target.id === "job_name") job.name = target.value;
+        if (target.id === "job_customer") job.customerId = target.value;
+        if (target.id === "job_address") job.address = target.value;
+        if (target.id === "job_status") job.status = target.value;
+        if (target.id === "job_notes") job.notes = target.value;
+        saveData();
+        return render();
+      }
+      if (target.id === "customer_name" || target.id === "customer_oib" || target.id === "customer_address" || target.id === "customer_phone" || target.id === "customer_email" || target.id === "customer_notes") {
+        const customer = getSelectedCustomer();
+        if (!customer) return;
+        if (target.id === "customer_name") customer.name = target.value;
+        if (target.id === "customer_oib") customer.oib = target.value;
+        if (target.id === "customer_address") customer.address = target.value;
+        if (target.id === "customer_phone") customer.phone = target.value;
+        if (target.id === "customer_email") customer.email = target.value;
+        if (target.id === "customer_notes") customer.notes = target.value;
         saveData();
         return render();
       }
@@ -2052,7 +2753,7 @@
         const item = state.data.inventory.find(i => i.id === target.dataset.invId);
         if (item) {
           const field = target.dataset.invField;
-          item[field] = target.type === "number" ? Number(target.value) : (field === "webshop" ? target.value === "true" : target.value);
+          updateInventoryItem(item, field, target.value);
           saveData();
           return render();
         }
@@ -2253,6 +2954,9 @@
       const offer = { ...state.draftOffer };
       offer.number = finalizeOfferNumber(state.draftOffer.number);
       state.data.offers.push(offer);
+      if (offer.customerId) {
+        addCustomerEvent(offer.customerId, "Ponuda", `Ponuda ${offer.number}`, "Ponuda", offer.number);
+      }
       state.draftOffer = createOfferDraft();
       saveData();
       toast("Ponuda spremljena.");
@@ -2276,6 +2980,8 @@
       if (!offer) return;
       state.draftInvoice = {
         ...createInvoiceDraft(),
+        customerId: offer.customerId || "",
+        projectId: offer.projectId || "",
         customer: offer.customer,
         phone: offer.phone,
         address: offer.address,
@@ -2310,6 +3016,8 @@
       if (!offer) return;
       state.draftInvoice = {
         ...createInvoiceDraft(),
+        customerId: offer.customerId || "",
+        projectId: offer.projectId || "",
         customer: offer.customer,
         phone: offer.phone,
         address: offer.address,
@@ -2329,6 +3037,9 @@
       invoice.number = finalizeInvoiceNumber(state.draftInvoice.number);
       state.data.invoices.push(invoice);
       updateStockFromInvoice(invoice);
+      if (invoice.customerId) {
+        addCustomerEvent(invoice.customerId, "Racun", `Racun ${invoice.number}`, "Racun", invoice.number);
+      }
       state.draftInvoice = createInvoiceDraft();
       saveData();
       toast("Racun spremljen.");
@@ -2364,6 +3075,9 @@
     function addInventory() {
       const name = $("#inv_name").value.trim();
       if (!name) return toast("Upisite naziv artikla.");
+      const cost = Number($("#inv_cost").value || 0);
+      const price = Number($("#inv_price").value || 0);
+      const marginPct = cost > 0 ? Math.round(((price - cost) / cost) * 1000) / 10 : 0;
       const newItem = {
         id: uid(),
         name,
@@ -2371,8 +3085,9 @@
         sku: $("#inv_sku").value.trim(),
         unit: $("#inv_unit").value.trim() || "kom",
         stock: Number($("#inv_stock").value || 0),
-        cost: Number($("#inv_cost").value || 0),
-        price: Number($("#inv_price").value || 0),
+        cost,
+        price,
+        marginPct,
         tier: $("#inv_tier").value,
         webshop: $("#inv_webshop").value === "true"
       };
