@@ -7,6 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --bg: #f6f7fb;
@@ -3777,10 +3778,10 @@
       };
       const idxCode = idx(["artikl", "sifra", "code"], 0);
       const idxName = idx(["naziv artikla", "naziv", "name"], 1);
-      const idxBrand = idx(["robne marke", "marka", "brand"], 2);
+      const idxBrand = idx(["robne marke", "robne", "marka", "brand"], 2);
       const idxCatalog = idx(["katalo", "catalog"], 3);
       const idxQty = idx(["kolic", "kol"], 4);
-      const idxGroup = idx(["grupe", "group"], 5);
+      const idxGroup = idx(["grup", "group"], 5);
       const idxVPC = idx(["vpc", "nabavn"], 6);
       const idxMPC = idx(["mpc", "prodajn"], 7);
       const idxDiscount = idx(["rabat", "popust"], -1);
