@@ -597,10 +597,20 @@
       normalized.inventory = normalized.inventory.map((item) => {
         const cost = Number(item.cost || 0);
         const price = Number(item.price || 0);
+        const supplierDiscountPct = Number(item.supplierDiscountPct || 0);
+        const netCost = cost * (1 - supplierDiscountPct / 100);
         const marginPct = Number(item.marginPct);
-        const computedMargin = cost > 0 ? ((price - cost) / cost) * 100 : 0;
+        const computedMargin = netCost > 0 ? ((price - netCost) / netCost) * 100 : 0;
         return {
           ...item,
+          code: item.code || item.itemCode || item.sku || "",
+          brand: item.brand || "",
+          catalogNo: item.catalogNo || item.catalog || "",
+          groupName: item.groupName || item.group || item.category || "Ostalo",
+          unit: item.unit || "kom",
+          minQty: Number(item.minQty || 0),
+          maxQty: Number(item.maxQty || 0),
+          supplierDiscountPct,
           cost,
           price,
           marginPct: Number.isFinite(marginPct) ? marginPct : Math.max(0, Math.round(computedMargin * 10) / 10)
@@ -802,23 +812,41 @@
     }
 
     function updateInventoryItem(item, field, rawValue) {
+      const toNumber = (value) => {
+        if (typeof value === "number") return value;
+        const cleaned = String(value || "").replace(",", ".").replace(/[^0-9.\-]/g, "");
+        return Number(cleaned) || 0;
+      };
+      const costNet = () => {
+        const cost = Number(item.cost || 0);
+        const discount = Number(item.supplierDiscountPct || 0);
+        return cost * (1 - discount / 100);
+      };
       if (field === "webshop") {
         item.webshop = rawValue === "true";
         return;
       }
-      if (field === "stock") item.stock = Number(rawValue) || 0;
-      if (field === "cost") item.cost = Number(rawValue) || 0;
-      if (field === "price") item.price = Number(rawValue) || 0;
-      if (field === "marginPct") {
-        item.marginPct = Number(rawValue) || 0;
-        const cost = Number(item.cost || 0);
-        item.price = cost > 0 ? cost * (1 + item.marginPct / 100) : item.price;
+      if (field === "stock") item.stock = toNumber(rawValue);
+      if (field === "cost") item.cost = toNumber(rawValue);
+      if (field === "price") item.price = toNumber(rawValue);
+      if (field === "supplierDiscountPct") item.supplierDiscountPct = toNumber(rawValue);
+      if (field === "minQty") item.minQty = toNumber(rawValue);
+      if (field === "maxQty") item.maxQty = toNumber(rawValue);
+      if (field === "code" || field === "brand" || field === "catalogNo" || field === "groupName" || field === "unit") {
+        item[field] = rawValue;
+        if (field === "groupName" && !item.category) item.category = rawValue;
         return;
       }
-      if (field === "cost" || field === "price") {
-        const cost = Number(item.cost || 0);
+      if (field === "marginPct") {
+        item.marginPct = toNumber(rawValue);
+        const net = costNet();
+        item.price = net > 0 ? net * (1 + item.marginPct / 100) : item.price;
+        return;
+      }
+      if (field === "cost" || field === "price" || field === "supplierDiscountPct") {
+        const net = costNet();
         const price = Number(item.price || 0);
-        item.marginPct = cost > 0 ? Math.round(((price - cost) / cost) * 1000) / 10 : 0;
+        item.marginPct = net > 0 ? Math.round(((price - net) / net) * 1000) / 10 : 0;
       }
     }
 
@@ -1844,6 +1872,15 @@
     function renderInventory() {
       const categories = [...new Set(state.data.inventory.map(i => i.category))];
       const plannedTotal = (state.data.supplierCatalog || []).reduce((sum, item) => sum + (Number(item.planQty || 0) * Number(item.cost || 0)), 0);
+      const groups = [...new Set(state.data.inventory.map(i => i.groupName || i.category || "Ostalo"))].sort();
+      const groupFilter = state.inventoryGroupFilter || "all";
+      const inventory = state.data.inventory.filter(i => groupFilter === "all" ? true : (i.groupName || i.category) === groupFilter);
+      const groupMap = inventory.reduce((acc, item) => {
+        const group = item.groupName || item.category || "Ostalo";
+        acc[group] = acc[group] || [];
+        acc[group].push(item);
+        return acc;
+      }, {});
       return `
         <div class="grid two">
           <div class="card">
@@ -1854,12 +1891,20 @@
                 <input id="inv_name" placeholder="Npr. PEX cijev 20mm" />
               </div>
               <div>
-                <label>Kategorija</label>
-                <input id="inv_category" placeholder="Grijanje, Cijevi..." />
+                <label>Grupa artikala</label>
+                <input id="inv_group" placeholder="Grupa proizvoda" />
               </div>
               <div>
-                <label>SKU</label>
-                <input id="inv_sku" placeholder="Sifra" />
+                <label>Artikl (sifra)</label>
+                <input id="inv_code" placeholder="Sifra artikla" />
+              </div>
+              <div>
+                <label>Naziv robne marke</label>
+                <input id="inv_brand" placeholder="Brand" />
+              </div>
+              <div>
+                <label>Kataloski broj</label>
+                <input id="inv_catalog" placeholder="Kataloski broj" />
               </div>
               <div>
                 <label>Jedinica</label>
@@ -1874,16 +1919,24 @@
                 <input id="inv_cost" type="number" min="0" step="0.01" />
               </div>
               <div>
+                <label>Rabat dobavljaca (%)</label>
+                <input id="inv_supplier_discount" type="number" min="0" step="0.1" value="0" />
+              </div>
+              <div>
                 <label>Prodajna cijena</label>
                 <input id="inv_price" type="number" min="0" step="0.01" />
               </div>
               <div>
-                <label>Razina (basic/standard/premium)</label>
-                <select id="inv_tier">
-                  <option value="basic">Basic</option>
-                  <option value="standard" selected>Standard</option>
-                  <option value="premium">Premium</option>
-                </select>
+                <label>Marza (%)</label>
+                <input id="inv_margin" type="number" min="0" step="0.1" value="0" />
+              </div>
+              <div>
+                <label>Minimalna kolicina</label>
+                <input id="inv_min_qty" type="number" min="0" step="0.1" />
+              </div>
+              <div>
+                <label>Maksimalna kolicina</label>
+                <input id="inv_max_qty" type="number" min="0" step="0.1" />
               </div>
               <div class="row align" style="grid-column:1/-1;">
                 <label style="min-width:160px;">U webshopu?</label>
@@ -1897,9 +1950,9 @@
           </div>
 
           <div class="card">
-            <h2>Kategorije</h2>
+            <h2>Grupe artikala</h2>
             <div class="row">
-              ${categories.map(cat => `<span class="pill">${cat}</span>`).join("") || `<span class="muted">Dodajte prve artikle.</span>`}
+              ${groups.map(cat => `<span class="pill">${cat}</span>`).join("") || `<span class="muted">Dodajte prve artikle.</span>`}
             </div>
             <div class="divider"></div>
             <h3>Postavke lagera</h3>
@@ -1910,62 +1963,111 @@
               <option value="true" ${state.data.settings.autoStock ? "selected" : ""}>Da</option>
               <option value="false" ${state.data.settings.autoStock ? "" : "selected"}>Ne</option>
             </select>
+            <div class="divider"></div>
+            <label>Filter po grupi</label>
+            <select id="inventory_group_filter">
+              <option value="all" ${groupFilter === "all" ? "selected" : ""}>Sve grupe</option>
+              ${groups.map(g => `<option value="${g}" ${groupFilter === g ? "selected" : ""}>${g}</option>`).join("")}
+            </select>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn" data-action="open-reorder-report">Izvjestaj nabave</button>
+              <label class="btn">
+                Uvezi artikle (CSV/XLSX)
+                <input id="inventory_file" type="file" accept=".csv,.xlsx,.xls" style="display:none" />
+              </label>
+            </div>
           </div>
         </div>
 
         <div class="card" style="margin-top:16px;">
           <h2>Pregled lagera</h2>
-          <div class="list">
-            ${state.data.inventory.map(item => {
-              const low = item.stock <= state.data.settings.lowStock;
-              const marginUnit = (item.price || 0) - (item.cost || 0);
-              const marginTotal = marginUnit * (item.stock || 0);
-              const totalValue = (item.stock || 0) * (item.price || 0);
-              return `
-                <div class="list-item">
-                  <div class="row space align">
-                    <div>
-                      <h4>${item.name}</h4>
-                      <div class="muted">${item.category} · ${item.sku || "bez sifre"}</div>
-                    </div>
-                    <span class="badge ${low ? "warn" : "ok"}">${item.stock} ${item.unit}</span>
-                  </div>
-                  <div class="row align">
-                    <div style="flex:1;min-width:120px;">
-                      <label>Stanje</label>
-                      <input type="number" min="0" step="0.1" value="${item.stock}" data-inv-id="${item.id}" data-inv-field="stock" />
-                    </div>
-                    <div style="flex:1;min-width:120px;">
-                      <label>Nabavna</label>
-                      <input type="number" min="0" step="0.01" value="${item.cost}" data-inv-id="${item.id}" data-inv-field="cost" />
-                    </div>
-                    <div style="flex:1;min-width:120px;">
-                      <label>Prodajna</label>
-                      <input type="number" min="0" step="0.01" value="${item.price}" data-inv-id="${item.id}" data-inv-field="price" />
-                    </div>
-                    <div style="flex:1;min-width:120px;">
-                      <label>Marza (%)</label>
-                      <input type="number" min="0" step="0.1" value="${item.marginPct || 0}" data-inv-id="${item.id}" data-inv-field="marginPct" />
-                    </div>
-                    <div style="flex:1;min-width:140px;">
-                      <label>Webshop</label>
-                      <select data-inv-id="${item.id}" data-inv-field="webshop">
-                        <option value="true" ${item.webshop ? "selected" : ""}>Da</option>
-                        <option value="false" ${item.webshop ? "" : "selected"}>Ne</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div class="row" style="margin-top:8px;">
-                    <span class="pill">Vrijednost: ${fmtEur(totalValue)}</span>
-                    <span class="pill">Marza: ${fmtEur(marginTotal)} (${(item.marginPct || 0).toFixed(1)}%)</span>
-                  </div>
+          ${Object.keys(groupMap).length === 0 ? `<p class="muted">Nema artikala.</p>` : Object.entries(groupMap).map(([group, items]) => {
+            const groupValueNet = items.reduce((sum, item) => {
+              const netCost = (item.cost || 0) * (1 - (item.supplierDiscountPct || 0) / 100);
+              return sum + (netCost * (item.stock || 0));
+            }, 0);
+            const groupValueRetail = items.reduce((sum, item) => sum + ((item.price || 0) * (item.stock || 0)), 0);
+            return `
+              <div class="card" style="margin-top:16px;">
+                <div class="row space align">
+                  <h3>${group}</h3>
                   <div class="row">
-                    <button class="btn small danger" data-action="delete-inventory" data-id="${item.id}">Obrisi</button>
+                    <span class="pill">Vrijednost nabavna: ${fmtEur(groupValueNet)}</span>
+                    <span class="pill">Vrijednost prodajna: ${fmtEur(groupValueRetail)}</span>
                   </div>
                 </div>
-              `;
-            }).join("")}
-          </div>
+                <div class="list">
+                  ${items.map(item => {
+                    const low = item.stock <= state.data.settings.lowStock;
+                    const netCost = (item.cost || 0) * (1 - (item.supplierDiscountPct || 0) / 100);
+                    const marginUnit = (item.price || 0) - netCost;
+                    const marginTotal = marginUnit * (item.stock || 0);
+                    const totalValueNet = (item.stock || 0) * netCost;
+                    const totalValueRetail = (item.stock || 0) * (item.price || 0);
+                    return `
+                      <div class="list-item">
+                        <div class="row space align">
+                          <div>
+                            <h4>${item.name}</h4>
+                            <div class="muted">${item.groupName || item.category || "-"} · ${item.code || item.sku || "bez sifre"} · ${item.catalogNo || "bez kataloskog broja"}</div>
+                            <div class="muted">Marka: ${item.brand || "-"}</div>
+                          </div>
+                          <span class="badge ${low ? "warn" : "ok"}">${item.stock} ${item.unit}</span>
+                        </div>
+                        <div class="row align">
+                          <div style="flex:1;min-width:120px;">
+                            <label>Stanje</label>
+                            <input type="number" min="0" step="0.1" value="${item.stock}" data-inv-id="${item.id}" data-inv-field="stock" />
+                          </div>
+                          <div style="flex:1;min-width:120px;">
+                            <label>Nabavna (VPC)</label>
+                            <input type="number" min="0" step="0.01" value="${item.cost}" data-inv-id="${item.id}" data-inv-field="cost" />
+                          </div>
+                          <div style="flex:1;min-width:120px;">
+                            <label>Rabat dobavljaca (%)</label>
+                            <input type="number" min="0" step="0.1" value="${item.supplierDiscountPct || 0}" data-inv-id="${item.id}" data-inv-field="supplierDiscountPct" />
+                          </div>
+                          <div style="flex:1;min-width:120px;">
+                            <label>Prodajna (MPC)</label>
+                            <input type="number" min="0" step="0.01" value="${item.price}" data-inv-id="${item.id}" data-inv-field="price" />
+                          </div>
+                          <div style="flex:1;min-width:120px;">
+                            <label>Marza (%)</label>
+                            <input type="number" min="0" step="0.1" value="${item.marginPct || 0}" data-inv-id="${item.id}" data-inv-field="marginPct" />
+                          </div>
+                        </div>
+                        <div class="row align">
+                          <div style="flex:1;min-width:120px;">
+                            <label>Min kolicina</label>
+                            <input type="number" min="0" step="0.1" value="${item.minQty || 0}" data-inv-id="${item.id}" data-inv-field="minQty" />
+                          </div>
+                          <div style="flex:1;min-width:120px;">
+                            <label>Max kolicina</label>
+                            <input type="number" min="0" step="0.1" value="${item.maxQty || 0}" data-inv-id="${item.id}" data-inv-field="maxQty" />
+                          </div>
+                          <div style="flex:1;min-width:140px;">
+                            <label>Webshop</label>
+                            <select data-inv-id="${item.id}" data-inv-field="webshop">
+                              <option value="true" ${item.webshop ? "selected" : ""}>Da</option>
+                              <option value="false" ${item.webshop ? "" : "selected"}>Ne</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div class="row" style="margin-top:8px;">
+                          <span class="pill">Nabavna vrijednost: ${fmtEur(totalValueNet)}</span>
+                          <span class="pill">Prodajna vrijednost: ${fmtEur(totalValueRetail)}</span>
+                          <span class="pill">Marza: ${fmtEur(marginTotal)} (${(item.marginPct || 0).toFixed(1)}%)</span>
+                        </div>
+                        <div class="row">
+                          <button class="btn small danger" data-action="delete-inventory" data-id="${item.id}">Obrisi</button>
+                        </div>
+                      </div>
+                    `;
+                  }).join("")}
+                </div>
+              </div>
+            `;
+          }).join("")}
         </div>
 
         <div class="card" style="margin-top:16px;">
@@ -2822,6 +2924,7 @@
       if (name === "add-supplier-item") return addSupplierItem();
       if (name === "delete-supplier-item") return deleteSupplierItem(action.dataset.id);
       if (name === "supplier-to-inventory") return supplierToInventory(action.dataset.id);
+      if (name === "open-reorder-report") return openReorderReport();
       if (name === "add-to-cart") return addToCart(action.dataset.id);
       if (name === "remove-cart") return removeFromCart(action.dataset.id);
       if (name === "checkout") return checkout();
@@ -3000,6 +3103,10 @@
           return render();
         }
       }
+      if (target.id === "inventory_group_filter") {
+        state.inventoryGroupFilter = target.value;
+        return render();
+      }
       if (target.dataset.setting) {
         const key = target.dataset.setting;
         if (key.includes(".")) {
@@ -3032,6 +3139,10 @@
       }
       if (target.id === "supplier_csv" && target.files && target.files[0]) {
         importSupplierCSV(target.files[0]);
+        return;
+      }
+      if (target.id === "inventory_file" && target.files && target.files[0]) {
+        importInventoryFile(target.files[0]);
         return;
       }
       if (target.id === "bundle_name") { state.draftBundle.name = target.value; return; }
@@ -3117,6 +3228,13 @@
       if (target.dataset.action === "shop-search") {
         state.shopQuery = target.value;
         render();
+      }
+      if (target.dataset.reorderId) {
+        const item = state.reorderDraft?.items?.find(i => i.id === target.dataset.reorderId);
+        if (item) {
+          item.qty = Number(target.value) || 0;
+          updateReorderTotal();
+        }
       }
     });
 
@@ -3400,19 +3518,28 @@
       const name = $("#inv_name").value.trim();
       if (!name) return toast("Upisite naziv artikla.");
       const cost = Number($("#inv_cost").value || 0);
+      const supplierDiscountPct = Number($("#inv_supplier_discount").value || 0);
+      const netCost = cost * (1 - supplierDiscountPct / 100);
       const price = Number($("#inv_price").value || 0);
-      const marginPct = cost > 0 ? Math.round(((price - cost) / cost) * 1000) / 10 : 0;
+      const marginPct = netCost > 0 ? Math.round(((price - netCost) / netCost) * 1000) / 10 : 0;
+      const groupName = $("#inv_group").value.trim() || "Ostalo";
       const newItem = {
         id: uid(),
         name,
-        category: $("#inv_category").value.trim() || "Ostalo",
-        sku: $("#inv_sku").value.trim(),
+        category: groupName,
+        groupName,
+        code: $("#inv_code").value.trim(),
+        brand: $("#inv_brand").value.trim(),
+        catalogNo: $("#inv_catalog").value.trim(),
         unit: $("#inv_unit").value.trim() || "kom",
         stock: Number($("#inv_stock").value || 0),
         cost,
         price,
+        supplierDiscountPct,
         marginPct,
-        tier: $("#inv_tier").value,
+        minQty: Number($("#inv_min_qty").value || 0),
+        maxQty: Number($("#inv_max_qty").value || 0),
+        tier: "standard",
         webshop: $("#inv_webshop").value === "true"
       };
       state.data.inventory.push(newItem);
@@ -3631,6 +3758,188 @@
         toast("Cjenik uvezen.");
       };
       reader.readAsText(file);
+    }
+
+    function parseNumber(value) {
+      if (typeof value === "number") return value;
+      const cleaned = String(value || "").replace(",", ".").replace(/[^0-9.\-]/g, "");
+      return Number(cleaned) || 0;
+    }
+
+    function importInventoryRows(rows) {
+      if (!rows.length) return toast("Datoteka nema podataka.");
+      const header = rows[0].map(h => String(h || "").toLowerCase().trim());
+      const hasHeader = header.some(h => h.includes("naziv") || h.includes("mpc") || h.includes("vpc") || h.includes("grupe") || h.includes("artikl"));
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+      const idx = (keys, fallback) => {
+        const i = header.findIndex(h => keys.some(k => h.includes(k)));
+        return i >= 0 ? i : fallback;
+      };
+      const idxCode = idx(["artikl", "sifra", "code"], 0);
+      const idxName = idx(["naziv artikla", "naziv", "name"], 1);
+      const idxBrand = idx(["robne marke", "marka", "brand"], 2);
+      const idxCatalog = idx(["katalo", "catalog"], 3);
+      const idxQty = idx(["kolic", "kol"], 4);
+      const idxGroup = idx(["grupe", "group"], 5);
+      const idxVPC = idx(["vpc", "nabavn"], 6);
+      const idxMPC = idx(["mpc", "prodajn"], 7);
+      const idxDiscount = idx(["rabat", "popust"], -1);
+      const idxMargin = idx(["marz", "margin"], -1);
+      const idxMin = idx(["min"], -1);
+      const idxMax = idx(["max"], -1);
+      const idxUnit = idx(["jed", "unit"], -1);
+
+      dataRows.forEach(cols => {
+        const code = (cols[idxCode] || "").toString().trim();
+        const name = (cols[idxName] || "").toString().trim();
+        if (!name && !code) return;
+        const brand = (idxBrand >= 0 ? cols[idxBrand] : "") || "";
+        const catalogNo = (idxCatalog >= 0 ? cols[idxCatalog] : "") || "";
+        const groupName = ((idxGroup >= 0 ? cols[idxGroup] : "") || "Ostalo").toString().trim();
+        const stock = parseNumber(idxQty >= 0 ? cols[idxQty] : 0);
+        const cost = parseNumber(idxVPC >= 0 ? cols[idxVPC] : 0);
+        const price = parseNumber(idxMPC >= 0 ? cols[idxMPC] : 0);
+        const supplierDiscountPct = parseNumber(idxDiscount >= 0 ? cols[idxDiscount] : 0);
+        const unit = (idxUnit >= 0 ? cols[idxUnit] : "kom") || "kom";
+        const minQty = parseNumber(idxMin >= 0 ? cols[idxMin] : 0);
+        const maxQty = parseNumber(idxMax >= 0 ? cols[idxMax] : 0);
+
+        const netCost = cost * (1 - supplierDiscountPct / 100);
+        let marginPct = parseNumber(idxMargin >= 0 ? cols[idxMargin] : 0);
+        let finalPrice = price;
+        if (!finalPrice && marginPct) {
+          finalPrice = netCost * (1 + marginPct / 100);
+        }
+        if (!marginPct && finalPrice && netCost > 0) {
+          marginPct = Math.round(((finalPrice - netCost) / netCost) * 1000) / 10;
+        }
+
+        const existing = state.data.inventory.find(item =>
+          (code && item.code === code) ||
+          (catalogNo && item.catalogNo === catalogNo) ||
+          (name && item.name === name)
+        );
+        if (existing) {
+          existing.code = code || existing.code;
+          existing.name = name || existing.name;
+          existing.brand = brand || existing.brand;
+          existing.catalogNo = catalogNo || existing.catalogNo;
+          existing.groupName = groupName || existing.groupName;
+          existing.category = groupName || existing.category;
+          existing.unit = unit || existing.unit;
+          if (stock) existing.stock = stock;
+          if (cost) existing.cost = cost;
+          if (finalPrice) existing.price = finalPrice;
+          existing.supplierDiscountPct = supplierDiscountPct;
+          existing.marginPct = marginPct || existing.marginPct;
+          existing.minQty = minQty || existing.minQty;
+          existing.maxQty = maxQty || existing.maxQty;
+        } else {
+          state.data.inventory.push({
+            id: uid(),
+            code,
+            name,
+            brand,
+            catalogNo,
+            groupName,
+            category: groupName,
+            unit,
+            stock,
+            cost,
+            price: finalPrice,
+            supplierDiscountPct,
+            marginPct,
+            minQty,
+            maxQty,
+            tier: "standard",
+            webshop: false
+          });
+        }
+      });
+      saveData();
+      render();
+      toast("Artikli uvezeni.");
+    }
+
+    function importInventoryFile(file) {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if ((ext === "xlsx" || ext === "xls") && window.XLSX) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const data = new Uint8Array(reader.result);
+          const wb = XLSX.read(data, { type: "array" });
+          const sheetName = wb.SheetNames[0];
+          const ws = wb.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+          importInventoryRows(rows);
+        };
+        reader.readAsArrayBuffer(file);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const rows = parseCSV(reader.result || "");
+        importInventoryRows(rows);
+      };
+      reader.readAsText(file);
+    }
+
+    function openReorderReport() {
+      const items = state.data.inventory.filter(item => (item.minQty || 0) > 0 && (item.stock || 0) < (item.minQty || 0));
+      if (!items.length) return toast("Nema stavki ispod minimuma.");
+      state.reorderDraft = {
+        items: items.map(item => {
+          const maxQty = Number(item.maxQty || 0);
+          const minQty = Number(item.minQty || 0);
+          const stock = Number(item.stock || 0);
+          const suggested = maxQty > 0 ? Math.max(0, maxQty - stock) : Math.max(0, minQty - stock);
+          return {
+            id: item.id,
+            code: item.code || item.sku || "",
+            name: item.name,
+            groupName: item.groupName || item.category || "",
+            cost: item.cost || 0,
+            supplierDiscountPct: item.supplierDiscountPct || 0,
+            qty: suggested
+          };
+        })
+      };
+      openModal("Izvjestaj nabave", `
+        <div class="list">
+          ${state.reorderDraft.items.map(item => {
+            const netCost = (item.cost || 0) * (1 - (item.supplierDiscountPct || 0) / 100);
+            return `
+              <div class="list-item">
+                <div class="row space align">
+                  <strong>${item.name}</strong>
+                  <span class="pill">${item.groupName}</span>
+                </div>
+                <div class="muted">Sifra: ${item.code || "-"} · Nabavna (neto): ${fmtEur(netCost)}</div>
+                <div class="row align">
+                  <label style="min-width:140px;">Kolicina za narudzbu</label>
+                  <input type="number" min="0" step="0.1" value="${item.qty}" data-reorder-id="${item.id}" />
+                  <span class="pill">Ukupno: ${fmtEur(netCost * item.qty)}</span>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+        <div class="divider"></div>
+        <div class="row space align">
+          <strong>Ukupni trosak nabave:</strong>
+          <strong id="reorder_total">0</strong>
+        </div>
+      `);
+      updateReorderTotal();
+    }
+
+    function updateReorderTotal() {
+      const total = (state.reorderDraft?.items || []).reduce((sum, item) => {
+        const netCost = (item.cost || 0) * (1 - (item.supplierDiscountPct || 0) / 100);
+        return sum + netCost * (item.qty || 0);
+      }, 0);
+      const el = $("#reorder_total");
+      if (el) el.textContent = fmtEur(total);
     }
 
     function addToCart(id) {
